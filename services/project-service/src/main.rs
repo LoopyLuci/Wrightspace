@@ -1,13 +1,15 @@
 use axum::{
-    extract::{Path, State, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{Path, Query, State, ws::{Message, WebSocket, WebSocketUpgrade}},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use futures::{SinkExt, StreamExt};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::{Arc, Mutex}};
 use tokio::{fs, sync::{broadcast, RwLock}};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -26,6 +28,8 @@ struct AppState {
     ai_base_url: Arc<String>,
     ai_api_key: Arc<Option<String>>,
     ai_model: Arc<String>,
+    marketplace_blocks: Arc<RwLock<HashMap<String, Vec<BlockPackage>>>>,
+    marketplace_store_path: Arc<PathBuf>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -55,6 +59,88 @@ struct GeneratePlanRequest {
     ir_snapshot: Option<Value>,
     #[serde(default, rename = "responseFormat")]
     response_format: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct BlockDependency {
+    id: String,
+    version: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct BlockPackageMetadata {
+    id: String,
+    name: String,
+    description: String,
+    version: String,
+    author: String,
+    license: String,
+    framework: Vec<String>,
+    trust: String,
+    keywords: Vec<String>,
+    category: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    #[serde(default)]
+    dependencies: Vec<BlockDependency>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct BlockPackage {
+    metadata: BlockPackageMetadata,
+    #[serde(rename = "irNode")]
+    ir_node: Value,
+    signature: String,
+}
+
+#[derive(Clone, Serialize)]
+struct RegistryEntry {
+    id: String,
+    name: String,
+    description: String,
+    version: String,
+    author: String,
+    license: String,
+    framework: Vec<String>,
+    trust: String,
+    keywords: Vec<String>,
+    category: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+    #[serde(rename = "updatedAt")]
+    updated_at: String,
+    dependencies: Vec<BlockDependency>,
+    signature: String,
+}
+
+impl RegistryEntry {
+    fn from_block(pkg: &BlockPackage) -> Self {
+        Self {
+            id: pkg.metadata.id.clone(),
+            name: pkg.metadata.name.clone(),
+            description: pkg.metadata.description.clone(),
+            version: pkg.metadata.version.clone(),
+            author: pkg.metadata.author.clone(),
+            license: pkg.metadata.license.clone(),
+            framework: pkg.metadata.framework.clone(),
+            trust: pkg.metadata.trust.clone(),
+            keywords: pkg.metadata.keywords.clone(),
+            category: pkg.metadata.category.clone(),
+            created_at: pkg.metadata.created_at.clone(),
+            updated_at: pkg.metadata.updated_at.clone(),
+            dependencies: pkg.metadata.dependencies.clone(),
+            signature: pkg.signature.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct MarketplaceSearchQuery {
+    q: Option<String>,
+    category: Option<String>,
+    framework: Option<String>,
 }
 
 #[derive(Clone)]
@@ -138,6 +224,9 @@ async fn main() {
         .ok();
     let ai_model = std::env::var("AI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
 
+    let marketplace_store_path = PathBuf::from("data/marketplace_blocks.json");
+    let marketplace_blocks = load_marketplace_blocks(&marketplace_store_path).await;
+
     let state = AppState {
         projects: Arc::new(RwLock::new(HashMap::new())),
         rooms: Arc::new(RwLock::new(HashMap::new())),
@@ -146,6 +235,8 @@ async fn main() {
         ai_base_url: Arc::new(ai_base_url),
         ai_api_key: Arc::new(ai_api_key),
         ai_model: Arc::new(ai_model),
+        marketplace_blocks: Arc::new(RwLock::new(marketplace_blocks)),
+        marketplace_store_path: Arc::new(marketplace_store_path),
     };
 
     let app = Router::new()
@@ -154,6 +245,10 @@ async fn main() {
         .route("/projects/:id", get(get_project))
         .route("/api/ai/generate-component", post(generate_component))
         .route("/api/ai/generate-plan", post(generate_plan))
+        .route("/api/marketplace/publish", post(publish_block))
+        .route("/api/marketplace/search", get(search_blocks))
+        .route("/api/marketplace/blocks/:id", get(get_block))
+        .route("/api/marketplace/blocks/:id/versions", get(list_block_versions))
         .route("/ws/projects/:id/collab", get(collab_socket))
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -671,8 +766,327 @@ fn validate_ir_node(value: &Value) -> Result<(), String> {
 
             Ok(())
         }
+        "component" => {
+            let component_id = value
+                .get("componentId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "component node missing componentId".to_string())?;
+            if component_id.trim().is_empty() {
+                return Err("componentId cannot be empty".to_string());
+            }
+
+            if !value.get("props").map(Value::is_object).unwrap_or(false) {
+                return Err("component props must be an object".to_string());
+            }
+
+            let slots = value
+                .get("slots")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "component slots must be an object".to_string())?;
+
+            for (_slot_name, slot_nodes) in slots {
+                let slot_array = slot_nodes
+                    .as_array()
+                    .ok_or_else(|| "component slot content must be an array".to_string())?;
+                for child in slot_array {
+                    validate_ir_node(child)?;
+                }
+            }
+
+            Ok(())
+        }
+        "slot" => {
+            let slot_name = value
+                .get("slotName")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "slot node missing slotName".to_string())?;
+            if slot_name.trim().is_empty() {
+                return Err("slotName cannot be empty".to_string());
+            }
+
+            if let Some(fallback) = value.get("fallback") {
+                let fallback_nodes = fallback
+                    .as_array()
+                    .ok_or_else(|| "slot fallback must be an array".to_string())?;
+                for child in fallback_nodes {
+                    validate_ir_node(child)?;
+                }
+            }
+
+            Ok(())
+        }
         _ => Err("unsupported node type".to_string()),
     }
+}
+
+fn canonicalize_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(v) => {
+            if *v { "true".to_string() } else { "false".to_string() }
+        }
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string()),
+        Value::Array(items) => {
+            let serialized = items.iter().map(canonicalize_json).collect::<Vec<_>>().join(",");
+            format!("[{serialized}]")
+        }
+        Value::Object(map) => {
+            let mut keys = map.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            let serialized = keys
+                .iter()
+                .map(|key| {
+                    let value = map.get(key).unwrap_or(&Value::Null);
+                    let key_json = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string());
+                    format!("{key_json}:{}", canonicalize_json(value))
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{serialized}}}")
+        }
+    }
+}
+
+fn hash_ir_node(ir_node: &Value) -> String {
+    let canonical = canonicalize_json(ir_node);
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn verify_block_signature(pkg: &BlockPackage) -> bool {
+    hash_ir_node(&pkg.ir_node) == pkg.signature.to_lowercase()
+}
+
+fn parse_semver(version: &str) -> Option<(u64, u64, u64, Option<String>, Option<String>)> {
+    let semver_regex = Regex::new(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$").ok()?;
+    let captures = semver_regex.captures(version)?;
+    let major = captures.get(1)?.as_str().parse::<u64>().ok()?;
+    let minor = captures.get(2)?.as_str().parse::<u64>().ok()?;
+    let patch = captures.get(3)?.as_str().parse::<u64>().ok()?;
+    let pre = captures.get(4).map(|m| m.as_str().to_string());
+    let build = captures.get(5).map(|m| m.as_str().to_string());
+    Some((major, minor, patch, pre, build))
+}
+
+fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
+    match (parse_semver(a), parse_semver(b)) {
+        (Some(left), Some(right)) => {
+            let ordering = left.0.cmp(&right.0)
+                .then(left.1.cmp(&right.1))
+                .then(left.2.cmp(&right.2));
+            if ordering != std::cmp::Ordering::Equal {
+                return ordering;
+            }
+
+            match (&left.3, &right.3) {
+                (None, None) => std::cmp::Ordering::Equal,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (Some(l), Some(r)) => l.cmp(r),
+            }
+        }
+        _ => a.cmp(b),
+    }
+}
+
+fn validate_marketplace_block(pkg: &BlockPackage) -> Result<(), String> {
+    if pkg.metadata.id.trim().is_empty() {
+        return Err("metadata.id cannot be empty".to_string());
+    }
+    if pkg.metadata.name.trim().is_empty() {
+        return Err("metadata.name cannot be empty".to_string());
+    }
+    if pkg.metadata.description.trim().is_empty() {
+        return Err("metadata.description cannot be empty".to_string());
+    }
+    if parse_semver(&pkg.metadata.version).is_none() {
+        return Err("metadata.version must be semver".to_string());
+    }
+    if pkg.metadata.author.trim().is_empty() {
+        return Err("metadata.author cannot be empty".to_string());
+    }
+    if pkg.metadata.license.trim().is_empty() {
+        return Err("metadata.license cannot be empty".to_string());
+    }
+    if pkg.metadata.framework.is_empty() {
+        return Err("metadata.framework cannot be empty".to_string());
+    }
+    if pkg.metadata.category.trim().is_empty() {
+        return Err("metadata.category cannot be empty".to_string());
+    }
+
+    if pkg.metadata.trust != "verified"
+        && pkg.metadata.trust != "community"
+        && pkg.metadata.trust != "unverified"
+    {
+        return Err("metadata.trust must be verified, community, or unverified".to_string());
+    }
+
+    for dependency in &pkg.metadata.dependencies {
+        if dependency.id.trim().is_empty() {
+            return Err("dependency id cannot be empty".to_string());
+        }
+        if parse_semver(&dependency.version).is_none() {
+            return Err(format!("dependency {} must use semver", dependency.id));
+        }
+    }
+
+    if !pkg.signature.chars().all(|ch| ch.is_ascii_hexdigit()) || pkg.signature.len() != 64 {
+        return Err("signature must be a 64-char SHA-256 hex string".to_string());
+    }
+
+    validate_ir_node(&pkg.ir_node)?;
+
+    if !verify_block_signature(pkg) {
+        return Err("signature does not match irNode hash".to_string());
+    }
+
+    Ok(())
+}
+
+async fn load_marketplace_blocks(path: &PathBuf) -> HashMap<String, Vec<BlockPackage>> {
+    match fs::read(path).await {
+        Ok(bytes) => serde_json::from_slice::<HashMap<String, Vec<BlockPackage>>>(&bytes).unwrap_or_default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+async fn persist_marketplace_blocks(state: &AppState) -> Result<(), String> {
+    let snapshot = {
+        let guard = state.marketplace_blocks.read().await;
+        serde_json::to_vec_pretty(&*guard).map_err(|error| format!("serialize store failed: {error}"))?
+    };
+
+    if let Some(parent) = state.marketplace_store_path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|error| format!("failed to create marketplace data dir: {error}"))?;
+    }
+
+    fs::write(&*state.marketplace_store_path, snapshot)
+        .await
+        .map_err(|error| format!("failed to write marketplace data: {error}"))?;
+
+    Ok(())
+}
+
+async fn publish_block(
+    State(state): State<AppState>,
+    Json(pkg): Json<BlockPackage>,
+) -> impl IntoResponse {
+    if let Err(error) = validate_marketplace_block(&pkg) {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": error }))).into_response();
+    }
+
+    {
+        let mut guard = state.marketplace_blocks.write().await;
+        let versions = guard.entry(pkg.metadata.id.clone()).or_default();
+
+        if let Some(existing) = versions.iter_mut().find(|existing| existing.metadata.version == pkg.metadata.version) {
+            *existing = pkg.clone();
+        } else {
+            versions.push(pkg.clone());
+        }
+
+        versions.sort_by(|a, b| compare_semver(&a.metadata.version, &b.metadata.version));
+    }
+
+    if let Err(error) = persist_marketplace_blocks(&state).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": error })),
+        )
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(pkg)).into_response()
+}
+
+async fn search_blocks(
+    State(state): State<AppState>,
+    Query(query): Query<MarketplaceSearchQuery>,
+) -> impl IntoResponse {
+    let needle = query.q.unwrap_or_default().to_lowercase();
+    let category = query.category.unwrap_or_default().to_lowercase();
+    let framework = query.framework.unwrap_or_default().to_lowercase();
+
+    let guard = state.marketplace_blocks.read().await;
+    let mut entries: Vec<RegistryEntry> = guard
+        .values()
+        .filter_map(|versions| versions.last())
+        .filter(|pkg| {
+            if !needle.is_empty() {
+                let haystack = format!(
+                    "{} {} {} {}",
+                    pkg.metadata.id,
+                    pkg.metadata.name,
+                    pkg.metadata.description,
+                    pkg.metadata.keywords.join(" ")
+                )
+                .to_lowercase();
+                if !haystack.contains(&needle) {
+                    return false;
+                }
+            }
+
+            if !category.is_empty() && pkg.metadata.category.to_lowercase() != category {
+                return false;
+            }
+
+            if !framework.is_empty()
+                && !pkg
+                    .metadata
+                    .framework
+                    .iter()
+                    .any(|item| item.to_lowercase() == framework)
+            {
+                return false;
+            }
+
+            true
+        })
+        .map(RegistryEntry::from_block)
+        .collect();
+
+    entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    (StatusCode::OK, Json(entries)).into_response()
+}
+
+async fn get_block(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let guard = state.marketplace_blocks.read().await;
+    let Some(versions) = guard.get(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "block not found" }))).into_response();
+    };
+
+    let Some(latest) = versions.last() else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "block not found" }))).into_response();
+    };
+
+    (StatusCode::OK, Json(latest.clone())).into_response()
+}
+
+async fn list_block_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let guard = state.marketplace_blocks.read().await;
+    let Some(versions) = guard.get(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "block not found" }))).into_response();
+    };
+
+    let mut sorted = versions
+        .iter()
+        .map(|item| item.metadata.version.clone())
+        .collect::<Vec<_>>();
+    sorted.sort_by(|a, b| compare_semver(a, b));
+
+    (StatusCode::OK, Json(sorted)).into_response()
 }
 
 async fn collab_socket(

@@ -13,3 +13,5 @@ tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync"] 
 yrs = "0.26"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+regex = "1"
