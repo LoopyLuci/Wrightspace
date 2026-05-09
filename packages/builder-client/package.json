@@ -17,6 +17,7 @@
     "@builder/canvas": "workspace:*",
     "@builder/export": "workspace:*",
     "@builder/ir": "workspace:*",
+    "@builder/marketplace": "workspace:*",
     "@builder/sync": "workspace:*",
     "@builder/ide": "workspace:*",
     "next": "15.3.2",

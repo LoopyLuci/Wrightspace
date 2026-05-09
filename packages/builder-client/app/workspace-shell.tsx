@@ -6,6 +6,8 @@ import { runAgentLoop, type AgentLogEntry, type AgentSnapshot } from "@builder/a
 import { CommandBar } from "@builder/ai";
 import { IdeShell } from "@builder/ide";
 import type { IRNode, PageIR } from "../../builder-ir/dist/src/types.js";
+import { searchBlocks, getBlock } from "@builder/marketplace/registry-client";
+import type { RegistryEntry } from "@builder/marketplace/schema";
 import { useAwareness, useSharedObject, useYjsDoc } from "@builder/collab";
 import {
   EDITOR_ORIGIN,
@@ -17,6 +19,12 @@ import {
 } from "@builder/sync";
 
 type ViewMode = "canvas" | "split" | "code";
+
+type MarketplaceFilters = {
+  category: string;
+  framework: string;
+  trust: string;
+};
 
 const MODE_LABELS: Record<ViewMode, string> = {
   canvas: "Canvas Focus",
@@ -71,6 +79,13 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
   });
   const [exporting, setExporting] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [isMarketplaceOpen, setIsMarketplaceOpen] = useState(false);
+  const [mktQuery, setMktQuery] = useState("");
+  const [mktFilters, setMktFilters] = useState<MarketplaceFilters>({ category: "", framework: "", trust: "" });
+  const [mktResults, setMktResults] = useState<RegistryEntry[]>([]);
+  const [mktLoading, setMktLoading] = useState(false);
+  const [importingId, setImportingId] = useState<string | null>(null);
+  const searchTimerRef = useRef<number | null>(null);
   const [syncMode, setSyncMode] = useState<SyncMode>(() => {
     if (typeof window === "undefined") {
       return "strict";
@@ -115,6 +130,9 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
   const ir = (workspace.get("ir") as string | undefined) ?? null;
   const irError = (workspace.get("irError") as string | undefined) ?? null;
   const collaboratorCount = awareness.states.length;
+  const filteredMktResults = mktFilters.trust
+    ? mktResults.filter((r) => r.trust === mktFilters.trust)
+    : mktResults;
   const activeCode = code || DEFAULT_CODE;
 
   useEffect(() => {
@@ -209,8 +227,102 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
     setNotice({ kind: "success", message: "AI node inserted into the current page." });
   };
 
-  const triggerZipDownload = (blob: Blob, fileName: string) => {
-    const objectUrl = URL.createObjectURL(blob);
+  useEffect(() => {
+    if (!isMarketplaceOpen) {
+      return;
+    }
+
+    if (searchTimerRef.current !== null) {
+      window.clearTimeout(searchTimerRef.current);
+    }
+
+    searchTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setMktLoading(true);
+          const params: { q?: string; category?: string; framework?: string } = {};
+          if (mktQuery.trim()) params.q = mktQuery.trim();
+          if (mktFilters.category) params.category = mktFilters.category;
+          if (mktFilters.framework) params.framework = mktFilters.framework;
+          const results = await searchBlocks("http://localhost:4001", params);
+          setMktResults(results);
+        } catch {
+          // panel shows empty state on error
+        } finally {
+          setMktLoading(false);
+        }
+      })();
+    }, 300);
+
+    return () => {
+      if (searchTimerRef.current !== null) {
+        window.clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [isMarketplaceOpen, mktQuery, mktFilters]);
+
+  const handleImportBlock = async (entry: RegistryEntry) => {
+    setImportingId(entry.id);
+    try {
+      const pkg = await getBlock("http://localhost:4001", entry.id);
+
+      const verifyResponse = await fetch("/api/marketplace/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(pkg),
+      });
+
+      if (!verifyResponse.ok) {
+        throw new Error("Verify endpoint returned an error");
+      }
+
+      const { valid } = (await verifyResponse.json()) as { valid: boolean };
+      if (!valid) {
+        setNotice({ kind: "error", message: "Block signature invalid — import aborted" });
+        return;
+      }
+
+      const irSnapshot = workspace.get("ir") as string | undefined;
+      if (!irSnapshot) {
+        setNotice({ kind: "error", message: "Cannot import block: workspace IR is empty." });
+        return;
+      }
+
+      let page: PageIR;
+      try {
+        page = JSON.parse(irSnapshot) as PageIR;
+      } catch {
+        setNotice({ kind: "error", message: "Cannot import block: workspace IR is invalid JSON." });
+        return;
+      }
+
+      if (page.root.type !== "element") {
+        setNotice({ kind: "error", message: "Cannot import block: page root does not support children." });
+        return;
+      }
+
+      const nextPage: PageIR = {
+        ...page,
+        root: {
+          ...page.root,
+          children: [...page.root.children, pkg.irNode],
+        },
+      };
+
+      doc.transact(() => {
+        workspace.set("ir", JSON.stringify(nextPage, null, 2));
+      }, EDITOR_ORIGIN);
+
+      setNotice({ kind: "success", message: `Imported ${entry.name} v${entry.version}` });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setNotice({ kind: "error", message: `Import failed: ${message}` });
+    } finally {
+      setImportingId(null);
+    }
+  };
+
+  const triggerZipDownload = (blob: Blob, fileName: string) => {    const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = objectUrl;
     anchor.download = fileName;
@@ -463,6 +575,13 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
           <button type="button" className="workspace-btn" onClick={() => void handleRunAgent()} disabled={agentRun.running || deploying || exporting}>
             {agentRun.running ? "Running Agent..." : "Run Agent"}
           </button>
+          <button
+            type="button"
+            className={isMarketplaceOpen ? "workspace-btn workspace-btn-active" : "workspace-btn"}
+            onClick={() => setIsMarketplaceOpen((prev) => !prev)}
+          >
+            Marketplace
+          </button>
           <CommandBar designTokens={designTokens} onInsert={handleInsertGeneratedNode} />
         </div>
       </header>
@@ -540,6 +659,20 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
             })}
           </ol>
         </section>
+      )}
+
+      {isMarketplaceOpen && (
+        <MarketplacePanel
+          results={filteredMktResults}
+          loading={mktLoading}
+          query={mktQuery}
+          onQueryChange={setMktQuery}
+          filters={mktFilters}
+          onFilterChange={(f) => setMktFilters((prev) => ({ ...prev, ...f }))}
+          onImport={(entry) => void handleImportBlock(entry)}
+          importingId={importingId}
+          onClose={() => setIsMarketplaceOpen(false)}
+        />
       )}
 
       {mode === "split" && (
@@ -680,5 +813,103 @@ function SyncModeButton({
     >
       {label}
     </button>
+  );
+}
+
+const MARKETPLACE_FRAMEWORKS = ["next-react", "vite-react"];
+const MARKETPLACE_TRUSTS = ["verified", "community", "unverified"];
+
+function MarketplacePanel({
+  results,
+  loading,
+  query,
+  onQueryChange,
+  filters,
+  onFilterChange,
+  onImport,
+  importingId,
+  onClose
+}: {
+  results: RegistryEntry[];
+  loading: boolean;
+  query: string;
+  onQueryChange: (q: string) => void;
+  filters: MarketplaceFilters;
+  onFilterChange: (f: Partial<MarketplaceFilters>) => void;
+  onImport: (entry: RegistryEntry) => void;
+  importingId: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="workspace-marketplace-panel" aria-label="Marketplace">
+      <div className="workspace-marketplace-header">
+        <h2>Marketplace</h2>
+        <button type="button" className="workspace-btn" onClick={onClose} aria-label="Close marketplace">
+          Close
+        </button>
+      </div>
+      <div className="workspace-marketplace-search">
+        <label htmlFor="marketplace-search-input">Search blocks</label>
+        <input
+          id="marketplace-search-input"
+          type="search"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="Search by name or keyword..."
+        />
+      </div>
+      <div className="workspace-marketplace-filters" aria-label="Filters">
+        <span>Framework:</span>
+        {MARKETPLACE_FRAMEWORKS.map((fw) => (
+          <button
+            key={fw}
+            type="button"
+            className={filters.framework === fw ? "workspace-btn workspace-btn-active" : "workspace-btn"}
+            onClick={() => onFilterChange({ framework: filters.framework === fw ? "" : fw })}
+          >
+            {fw}
+          </button>
+        ))}
+        <span>Trust:</span>
+        {MARKETPLACE_TRUSTS.map((trust) => (
+          <button
+            key={trust}
+            type="button"
+            className={filters.trust === trust ? "workspace-btn workspace-btn-active" : "workspace-btn"}
+            onClick={() => onFilterChange({ trust: filters.trust === trust ? "" : trust })}
+          >
+            {trust}
+          </button>
+        ))}
+      </div>
+      {loading && <p className="workspace-marketplace-loading" aria-live="polite">Loading...</p>}
+      {!loading && results.length === 0 && (
+        <p className="workspace-marketplace-empty">No blocks found.</p>
+      )}
+      <ul className="workspace-marketplace-results" aria-label="Search results">
+        {results.map((entry) => (
+          <li key={entry.id} className="workspace-marketplace-result">
+            <div className="workspace-marketplace-result-meta">
+              <strong>{entry.name}</strong>
+              <span className="workspace-marketplace-trust" data-trust={entry.trust}>
+                {entry.trust}
+              </span>
+              <span className="workspace-marketplace-version">v{entry.version}</span>
+            </div>
+            <p className="workspace-marketplace-description">{entry.description}</p>
+            <p className="workspace-marketplace-author">by {entry.author}</p>
+            <button
+              type="button"
+              className="workspace-btn"
+              onClick={() => onImport(entry)}
+              disabled={importingId !== null}
+              aria-label={`Import ${entry.name}`}
+            >
+              {importingId === entry.id ? "Importing..." : "Import"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </aside>
   );
 }

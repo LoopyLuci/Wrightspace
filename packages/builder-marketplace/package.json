@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./registry-client": "./src/registry-client.ts",
+    "./schema": "./src/schema.ts",
+    "./integrity": "./src/integrity.ts"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
