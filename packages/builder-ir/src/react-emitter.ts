@@ -98,7 +98,7 @@ function emitPage(page: PageIR): string {
     code += emitCustomCodeRegion("functions", cc.functions);
     code += emitCustomCodeRegion("effects", cc.effects);
   }
-  code += `\nexport default function Page(props) {\n  return (\n    ${emitNode(page.root)}\n  );\n}`;
+  code += `\nexport default function Page() {\n  return (\n    ${emitNode(page.root)}\n  );\n}`;
   return code;
 }
 

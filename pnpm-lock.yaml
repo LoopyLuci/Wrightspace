@@ -21,6 +21,31 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.19.18)(jsdom@25.0.1)
 
+  packages/builder-agent:
+    dependencies:
+      '@builder/export':
+        specifier: workspace:*
+        version: link:../builder-export
+      '@builder/ir':
+        specifier: workspace:*
+        version: link:../builder-ir
+      '@builder/sync':
+        specifier: workspace:*
+        version: link:../builder-sync
+      yjs:
+        specifier: ^13.6.27
+        version: 13.6.30
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.17
+        version: 22.19.18
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.18)(jsdom@25.0.1)
+
   packages/builder-ai:
     dependencies:
       '@builder/ir':
@@ -70,6 +95,9 @@ importers:
 
   packages/builder-client:
     dependencies:
+      '@builder/agent':
+        specifier: workspace:*
+        version: link:../builder-agent
       '@builder/ai':
         specifier: workspace:*
         version: link:../builder-ai

@@ -1,0 +1,28 @@
+{
+  "name": "@builder/agent",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./validator": "./src/validator.ts"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "echo \"No lints configured yet\""
+  },
+  "dependencies": {
+    "@builder/export": "workspace:*",
+    "@builder/ir": "workspace:*",
+    "@builder/sync": "workspace:*",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
+  }
+}

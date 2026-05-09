@@ -119,6 +119,46 @@ body {
   color: #991b1b;
 }
 
+.workspace-agent-log {
+  border-radius: 14px;
+  border: 1px solid rgba(16, 42, 67, 0.17);
+  background: rgba(255, 255, 255, 0.68);
+  padding: 12px;
+}
+
+.workspace-agent-log-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.workspace-agent-log-header h2 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-agent-log ol {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.workspace-agent-log li {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.workspace-agent-log pre {
+  margin: 8px 0 0;
+  overflow: auto;
+  border-radius: 10px;
+  background: rgba(16, 42, 67, 0.06);
+  padding: 8px;
+  font-size: 12px;
+}
+
 .workspace-grid {
   min-height: calc(100vh - 170px);
   display: grid;

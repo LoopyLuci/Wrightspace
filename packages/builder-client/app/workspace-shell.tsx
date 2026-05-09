@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
+import { runAgentLoop, type AgentLogEntry } from "@builder/agent";
 import { CommandBar } from "@builder/ai";
 import { IdeShell } from "@builder/ide";
 import type { IRNode, PageIR } from "../../builder-ir/dist/src/types.js";
@@ -52,10 +53,17 @@ type DeployState = {
   liveUrl?: string | null;
 };
 
+type AgentRunState = {
+  prompt: string;
+  running: boolean;
+  logs: AgentLogEntry[];
+};
+
 export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
   const [mode, setMode] = useState<ViewMode>("split");
   const [iframeReady, setIframeReady] = useState(false);
   const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
+  const [agentRun, setAgentRun] = useState<AgentRunState>({ prompt: "", running: false, logs: [] });
   const [deployState, setDeployState] = useState<DeployState>({
     phase: "idle",
     message: "Not deployed yet",
@@ -243,6 +251,41 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
     }
   };
 
+  const handleRunAgent = async () => {
+    const prompt = window.prompt("Run agent prompt", "Create a blue button that says Subscribe.");
+    if (!prompt || !prompt.trim()) {
+      return;
+    }
+
+    try {
+      setAgentRun({ prompt, running: true, logs: [] });
+      const result = await runAgentLoop({
+        prompt,
+        projectId,
+        initialCode: activeCode,
+        initialIrSnapshot: ir
+      });
+
+      setAgentRun({ prompt, running: false, logs: result.stepLog });
+
+      doc.transact(() => {
+        workspace.set("ir", JSON.stringify(result.finalState.ir, null, 2));
+        workspace.set("code", result.finalState.code);
+      }, EDITOR_ORIGIN);
+      setYText(sourceText, result.finalState.code, EDITOR_ORIGIN);
+
+      if (result.ok) {
+        setNotice({ kind: "success", message: result.validation.message });
+      } else {
+        setNotice({ kind: "error", message: result.error ?? result.validation.message });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAgentRun((current) => ({ ...current, running: false }));
+      setNotice({ kind: "error", message: `Agent run failed: ${message}` });
+    }
+  };
+
   const pollDeploymentStatus = async (deploymentId: string) => {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -373,6 +416,9 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
           >
             {deploying ? "Deploying..." : "Deploy to Vercel"}
           </button>
+          <button type="button" className="workspace-btn" onClick={() => void handleRunAgent()} disabled={agentRun.running || deploying || exporting}>
+            {agentRun.running ? "Running Agent..." : "Run Agent"}
+          </button>
           <CommandBar designTokens={designTokens} onInsert={handleInsertGeneratedNode} />
         </div>
       </header>
@@ -399,6 +445,30 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
         <p className={notice.kind === "error" ? "workspace-toast workspace-toast-error" : "workspace-toast workspace-toast-success"}>
           {notice.message}
         </p>
+      )}
+
+      {agentRun.logs.length > 0 && (
+        <section className="workspace-agent-log" aria-label="Agent step log">
+          <div className="workspace-agent-log-header">
+            <h2>Agent Step Log</h2>
+            <span>{agentRun.prompt}</span>
+          </div>
+          <ol>
+            {agentRun.logs.map((entry, index) => {
+              const reportDetails = entry.phase === "report" && entry.details !== undefined
+                ? JSON.stringify(entry.details, null, 2)
+                : null;
+
+              return (
+                <li key={`${entry.phase}-${index}`}>
+                  <strong>{entry.phase}</strong>: {entry.message}
+                  {entry.stepDescription && <span> ({entry.stepDescription})</span>}
+                  {reportDetails ? <pre>{reportDetails}</pre> : null}
+                </li>
+              );
+            })}
+          </ol>
+        </section>
       )}
 
       {mode === "split" && (
