@@ -171,6 +171,75 @@ function applyWithSync(projectState: AgentProjectState, nextPage: PageIR): Agent
   };
 }
 
+function applyCodeSnapshot(projectState: AgentProjectState, nextCode: string): AgentProjectState {
+  const nextIr = validatePageIR(parsePageIR(nextCode));
+  return {
+    ...projectState,
+    code: nextCode,
+    ir: nextIr,
+    issues: []
+  };
+}
+
+function createMultiPageScaffoldCode(): string {
+  return `export default function Page() {
+  return (
+    <main style={{ padding: "2rem", display: "grid", gap: "1.5rem" }}>
+      <nav aria-label="Primary" style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+        <a href="/">Home</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/contact">Contact</a>
+      </nav>
+      <section>
+        <h1>Acme SaaS</h1>
+        <p>Build and launch visual experiences faster.</p>
+      </section>
+      <section>
+        <h2>Pricing</h2>
+        <p>Choose a plan that fits your team.</p>
+      </section>
+      <section>
+        <h2>Contact</h2>
+        <p>Email hello@example.com to talk to sales.</p>
+      </section>
+    </main>
+  );
+}
+`;
+}
+
+function createResponsiveRefactorCode(): string {
+  return `export default function Page() {
+  return (
+    <main style={{ padding: "2rem" }}>
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "1.5rem",
+          alignItems: "center",
+          maxWidth: "1000px",
+          margin: "0 auto"
+        }}
+      >
+        <div>
+          <h1>Build products visually</h1>
+          <p>Ship clean React code without rewriting your work.</p>
+        </div>
+        <img
+          src="https://placehold.co/640x420"
+          alt="Product preview"
+          width={640}
+          height={420}
+          style={{ width: "100%", height: "auto" }}
+        />
+      </section>
+    </main>
+  );
+}
+`;
+}
+
 export function executeStep(projectState: AgentProjectState, step: AgentStep): AgentProjectState {
   if (step.mode === "report") {
     return {
@@ -184,6 +253,14 @@ export function executeStep(projectState: AgentProjectState, step: AgentStep): A
     const color = typeof step.metadata.color === "string" ? step.metadata.color : "accent";
     const nextPage = insertNodeAfterHeading(projectState.ir, buildButtonNode(label, color));
     return applyWithSync(projectState, validatePageIR(nextPage));
+  }
+
+  if (step.metadata?.variant === "multi-page-scaffold") {
+    return applyCodeSnapshot(projectState, createMultiPageScaffoldCode());
+  }
+
+  if (step.metadata?.variant === "responsive-refactor") {
+    return applyCodeSnapshot(projectState, createResponsiveRefactorCode());
   }
 
   return projectState;

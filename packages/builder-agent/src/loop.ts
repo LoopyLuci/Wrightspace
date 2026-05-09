@@ -21,12 +21,26 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     initialIrSnapshot: options.initialIrSnapshot
   });
 
-  const plan = createPlan(options.prompt, options.benchmarkId);
+  const planningStartedAt = Date.now();
+  const planResult = await createPlan(options.prompt, {
+    benchmarkId: options.benchmarkId,
+    irSnapshot: options.initialIrSnapshot
+  });
+  const plan = planResult.steps;
+  const planningDurationMs = Date.now() - planningStartedAt;
+  const totalPlanTokens = planResult.tokenCount ?? 0;
+  const defaultStepTokenCount = plan.length > 0 ? Math.max(0, Math.round(totalPlanTokens / plan.length)) : 0;
+
   stepLog.push({
     phase: "plan",
     status: "success",
     message: `Planned ${plan.length} step${plan.length === 1 ? "" : "s"}.`,
-    details: plan
+    details: {
+      source: planResult.source,
+      plan
+    },
+    durationMs: planningDurationMs,
+    tokenCount: totalPlanTokens
   });
 
   let currentState = initialState;
@@ -34,9 +48,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   try {
     for (const step of plan) {
-      const beforeStep = createSnapshot(currentState);
+      const stepStartedAt = Date.now();
       currentState = executeStep(currentState, step);
+      const actDurationMs = Date.now() - stepStartedAt;
+
+      const stepTokenCount =
+        typeof step.metadata?.tokenCount === "number" ? step.metadata.tokenCount : defaultStepTokenCount;
+
+      const validateStartedAt = Date.now();
       validatePageIR(currentState.ir);
+      const validateDurationMs = Date.now() - validateStartedAt;
       lastCleanSnapshot = createSnapshot(currentState);
 
       stepLog.push({
@@ -44,17 +65,19 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         status: step.mode === "report" ? "partial" : "success",
         message: step.mode === "report" ? "Analyzed current page and recorded issues." : "Applied planned step.",
         stepDescription: step.description,
-        details: step.mode === "report" ? currentState.issues : step.expectedDiff
+        details: step.mode === "report" ? currentState.issues : step.expectedDiff,
+        durationMs: actDurationMs,
+        tokenCount: stepTokenCount
       });
 
       stepLog.push({
         phase: "validate",
         status: "success",
         message: "IR remained valid after step.",
-        stepDescription: step.description
+        stepDescription: step.description,
+        durationMs: validateDurationMs,
+        tokenCount: stepTokenCount
       });
-
-      void beforeStep;
     }
 
     const validation = options.validate
@@ -71,7 +94,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       phase: "report",
       status: validation.passed ? "success" : validation.partial ? "partial" : "error",
       message: validation.message,
-      details: validation.details
+      details: validation.details,
+      tokenCount: totalPlanTokens
     });
 
     if (!validation.passed && !validation.partial) {

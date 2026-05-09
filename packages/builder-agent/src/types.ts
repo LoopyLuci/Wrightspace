@@ -33,6 +33,8 @@ export interface AgentLogEntry {
   message: string;
   stepDescription?: string;
   details?: unknown;
+  durationMs?: number;
+  tokenCount?: number;
 }
 
 export interface AgentValidationResult {

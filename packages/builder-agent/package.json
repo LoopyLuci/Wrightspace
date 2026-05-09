@@ -18,7 +18,8 @@
     "@builder/export": "workspace:*",
     "@builder/ir": "workspace:*",
     "@builder/sync": "workspace:*",
-    "yjs": "^13.6.27"
+    "yjs": "^13.6.27",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

@@ -46,6 +46,17 @@ struct GenerateComponentRequest {
     design_tokens: Value,
 }
 
+#[derive(Deserialize)]
+struct GeneratePlanRequest {
+    prompt: String,
+    #[serde(default, rename = "benchmarkId")]
+    benchmark_id: Option<String>,
+    #[serde(default, rename = "irSnapshot")]
+    ir_snapshot: Option<Value>,
+    #[serde(default, rename = "responseFormat")]
+    response_format: Option<String>,
+}
+
 #[derive(Clone)]
 struct RoomMessage {
     source: Uuid,
@@ -142,6 +153,7 @@ async fn main() {
         .route("/projects", post(create_project))
         .route("/projects/:id", get(get_project))
         .route("/api/ai/generate-component", post(generate_component))
+        .route("/api/ai/generate-plan", post(generate_plan))
         .route("/ws/projects/:id/collab", get(collab_socket))
         .with_state(state)
         .layer(CorsLayer::permissive())
@@ -223,6 +235,49 @@ async fn generate_component(
     (StatusCode::OK, Json(json!({ "irNode": generated }))).into_response()
 }
 
+async fn generate_plan(
+    State(state): State<AppState>,
+    Json(request): Json<GeneratePlanRequest>,
+) -> impl IntoResponse {
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "prompt cannot be empty" }))).into_response();
+    }
+
+    let generated = if state.ai_api_key.is_some() {
+        match generate_plan_with_openai_proxy(
+            &state,
+            prompt,
+            request.benchmark_id.as_deref(),
+            request.ir_snapshot,
+            request.response_format.as_deref(),
+        )
+        .await
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("AI upstream failed: {error}") })),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        json!({ "plan": create_fallback_plan(prompt, request.benchmark_id.as_deref()) })
+    };
+
+    if let Err(error) = validate_plan_payload(&generated) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(json!({ "error": format!("invalid plan payload: {error}") })),
+        )
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(generated)).into_response()
+}
+
 async fn generate_with_openai_proxy(
     state: &AppState,
     prompt: &str,
@@ -288,6 +343,87 @@ async fn generate_with_openai_proxy(
     }
 
     Ok(parsed)
+}
+
+async fn generate_plan_with_openai_proxy(
+    state: &AppState,
+    prompt: &str,
+    benchmark_id: Option<&str>,
+    ir_snapshot: Option<Value>,
+    response_format: Option<&str>,
+) -> Result<Value, String> {
+    let api_key = state
+        .ai_api_key
+        .as_ref()
+        .clone()
+        .ok_or_else(|| "missing API key".to_string())?;
+
+    let endpoint = format!("{}/v1/chat/completions", state.ai_base_url.trim_end_matches('/'));
+    let request_body = json!({
+        "model": state.ai_model.as_str(),
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a planning engine for a React page builder. Return JSON only with a top-level 'plan' array. Each step must include description, target, action (create|update|delete), and expectedDiff. Keep the plan short and executable."
+            },
+            {
+                "role": "user",
+                "content": format!(
+                    "Prompt: {prompt}\nBenchmarkId: {}\nResponseFormat: {}\nCurrent IR Snapshot: {}",
+                    benchmark_id.unwrap_or("unknown"),
+                    response_format.unwrap_or("agent-plan"),
+                    ir_snapshot.unwrap_or(json!(null))
+                )
+            }
+        ],
+        "temperature": 0.2
+    });
+
+    let response = state
+        .ai_client
+        .post(endpoint)
+        .bearer_auth(api_key)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|error| format!("request error: {error}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("status {status}: {body}"));
+    }
+
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|error| format!("invalid JSON response: {error}"))?;
+
+    let content = payload
+        .get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .ok_or_else(|| "missing choices[0].message.content".to_string())?;
+
+    let extracted_json = extract_first_json_object(content)?;
+    let parsed = serde_json::from_str::<Value>(&extracted_json)
+        .map_err(|error| format!("response content was not valid JSON: {error}"))?;
+
+    let plan = if parsed.get("plan").and_then(Value::as_array).is_some() {
+        parsed.get("plan").cloned().unwrap_or(Value::Array(vec![]))
+    } else if parsed.is_array() {
+        parsed
+    } else {
+        Value::Array(vec![parsed])
+    };
+
+    Ok(json!({
+        "plan": plan,
+        "usage": payload.get("usage").cloned().unwrap_or(json!({}))
+    }))
 }
 
 fn extract_first_json_object(content: &str) -> Result<String, String> {
@@ -364,6 +500,115 @@ fn create_fallback_ir_node(prompt: &str) -> Value {
         }
       ]
     })
+}
+
+fn create_fallback_plan(prompt: &str, benchmark_id: Option<&str>) -> Value {
+    let normalized = prompt.to_lowercase();
+
+    if benchmark_id == Some("security-accessibility-audit")
+        || normalized.contains("audit")
+        || normalized.contains("security")
+        || normalized.contains("accessibility")
+    {
+        return json!([
+            {
+                "description": "Audit the current page for security and accessibility issues",
+                "target": "page:/",
+                "action": "update",
+                "expectedDiff": "Produce severity-rated findings and suggested fixes without destructive edits.",
+                "mode": "report"
+            }
+        ]);
+    }
+
+    if benchmark_id == Some("single-element-creation") || normalized.contains("button") || normalized.contains("subscribe") {
+        return json!([
+            {
+                "description": "Insert CTA button in the hero section",
+                "target": "page:/",
+                "action": "create",
+                "expectedDiff": "Append one accessible call-to-action button below the headline."
+            }
+        ]);
+    }
+
+    if benchmark_id == Some("multi-page-scaffold") || normalized.contains("pricing") || normalized.contains("contact") {
+        return json!([
+            {
+                "description": "Create a marketing scaffold with linked sections",
+                "target": "app-shell",
+                "action": "create",
+                "expectedDiff": "Add home, pricing, and contact sections with simple navigation links."
+            }
+        ]);
+    }
+
+    if benchmark_id == Some("responsive-refactor") || normalized.contains("responsive") || normalized.contains("mobile") {
+        return json!([
+            {
+                "description": "Refactor hero layout to avoid overflow on mobile",
+                "target": "page:/",
+                "action": "update",
+                "expectedDiff": "Switch to a responsive layout that stacks media below copy on narrow viewports."
+            }
+        ]);
+    }
+
+    json!([
+        {
+            "description": "Inspect the current page and prepare a targeted update",
+            "target": "page:/",
+            "action": "update",
+            "expectedDiff": "Produce a narrow, benchmark-style change with preserved structure."
+        }
+    ])
+}
+
+fn validate_plan_payload(value: &Value) -> Result<(), String> {
+    let plan = value
+        .get("plan")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "missing plan array".to_string())?;
+
+    if plan.is_empty() {
+        return Err("plan must contain at least one step".to_string());
+    }
+
+    for (index, step) in plan.iter().enumerate() {
+        let description = step
+            .get("description")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("plan[{index}] missing description"))?;
+        if description.trim().is_empty() {
+            return Err(format!("plan[{index}] description cannot be empty"));
+        }
+
+        let target = step
+            .get("target")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("plan[{index}] missing target"))?;
+        if target.trim().is_empty() {
+            return Err(format!("plan[{index}] target cannot be empty"));
+        }
+
+        let action = step
+            .get("action")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("plan[{index}] missing action"))?;
+        if action != "create" && action != "update" && action != "delete" {
+            return Err(format!("plan[{index}] action must be create, update, or delete"));
+        }
+
+        let expected_diff = step
+            .get("expectedDiff")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("plan[{index}] missing expectedDiff"))?;
+        if expected_diff.trim().is_empty() {
+            return Err(format!("plan[{index}] expectedDiff cannot be empty"));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_ir_node(value: &Value) -> Result<(), String> {

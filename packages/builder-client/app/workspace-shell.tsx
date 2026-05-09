@@ -463,6 +463,16 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
                 <li key={`${entry.phase}-${index}`}>
                   <strong>{entry.phase}</strong>: {entry.message}
                   {entry.stepDescription && <span> ({entry.stepDescription})</span>}
+                  {(entry.durationMs !== undefined || entry.tokenCount !== undefined) && (
+                    <span>
+                      {" "}
+                      [
+                      {entry.durationMs !== undefined ? `${entry.durationMs}ms` : "n/a"}
+                      {", "}
+                      {entry.tokenCount !== undefined ? `${entry.tokenCount} tokens` : "n/a"}
+                      ]
+                    </span>
+                  )}
                   {reportDetails ? <pre>{reportDetails}</pre> : null}
                 </li>
               );
