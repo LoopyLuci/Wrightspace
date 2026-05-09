@@ -7,6 +7,7 @@ import type {
   ComponentNode,
   SlotNode,
   ResponsiveStyles,
+  StateVariable,
 } from "./types";
 import type { FrameworkEmitter } from "./emitter";
 
@@ -72,13 +73,122 @@ function emitElementNode(node: ElementNode): string {
   return `<${node.tag} ${props}>${children}</${node.tag}>`;
 }
 
+function emitSlotNode(node: SlotNode): string {
+  const fallback = (node.fallback || []).map(emitNode).join("");
+  return `<div data-builder-id={"${node.id}"} data-builder-node={"slot"} data-builder-slot-name={"${node.slotName}"}>${fallback}</div>`;
+}
+
+function emitComponentNode(node: ComponentNode): string {
+  const classNameFromProps = typeof node.props?.className === "string" ? node.props.className : "";
+  const props = [
+    `data-builder-id={"${node.id}"}`,
+    `data-builder-node={"component"}`,
+    `data-builder-component-id={"${node.componentId}"}`,
+    node.variant ? `data-builder-variant={"${node.variant}"}` : "",
+    classNameFromProps ? `className=\"${classNameFromProps}\"` : "",
+    ...(node.events || []).map((event) => `${event.name}={${event.handler}}`),
+    ...Object.entries(node.props || {})
+      .filter(([key]) => key !== "className")
+      .map(([k, v]) => `${k}=${JSON.stringify(v)}`),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const slotRegions = Object.entries(node.slots || {})
+    .map(([slotName, slotChildren]) => {
+      const childrenCode = (slotChildren || []).map(emitNode).join("");
+      return `<div data-builder-slot={"${slotName}"}>${childrenCode}</div>`;
+    })
+    .join("");
+
+  return `<div ${props}>${slotRegions}</div>`;
+}
+
+function toSetterName(name: string): string {
+  return `set${name.charAt(0).toUpperCase()}${name.slice(1)}`;
+}
+
+function serializeStateValue(value: unknown): string {
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  return JSON.stringify(value);
+}
+
+interface OwnedState {
+  owner: string;
+  state: StateVariable;
+}
+
+function collectOwnedStates(node: IRNode, ownedStates: OwnedState[]): void {
+  if (node.type === "component") {
+    const componentNode = node as ComponentNode;
+    for (const state of componentNode.state || []) {
+      ownedStates.push({ owner: componentNode.id, state });
+    }
+    for (const slotNodes of Object.values(componentNode.slots || {})) {
+      for (const slotNode of slotNodes) {
+        collectOwnedStates(slotNode, ownedStates);
+      }
+    }
+    return;
+  }
+
+  if (node.type === "slot") {
+    const slotNode = node as SlotNode;
+    for (const fallbackNode of slotNode.fallback || []) {
+      collectOwnedStates(fallbackNode, ownedStates);
+    }
+    return;
+  }
+
+  if (node.type === "element") {
+    const elementNode = node as ElementNode;
+    for (const child of elementNode.children || []) {
+      collectOwnedStates(child, ownedStates);
+    }
+  }
+}
+
+function emitStateDeclarations(page: PageIR): string {
+  const declarations: string[] = [];
+  for (const state of page.state || []) {
+    declarations.push(
+      `  const [${state.name}, ${toSetterName(state.name)}] = useState<${state.type}>(${serializeStateValue(
+        state.initialValue
+      )}); // @builder:state owner=page type=${state.type}`
+    );
+  }
+
+  const ownedStates: OwnedState[] = [];
+  collectOwnedStates(page.root, ownedStates);
+  for (const { owner, state } of ownedStates) {
+    declarations.push(
+      `  const [${state.name}, ${toSetterName(state.name)}] = useState<${state.type}>(${serializeStateValue(
+        state.initialValue
+      )}); // @builder:state owner=${owner} type=${state.type}`
+    );
+  }
+
+  return declarations.join("\n");
+}
+
 function emitNode(node: IRNode): string {
   switch (node.type) {
     case "element":
       return emitElementNode(node as ElementNode);
     case "text":
       return emitTextNode(node as TextNode);
-    // TODO: component, slot, etc.
+    case "component":
+      return emitComponentNode(node as ComponentNode);
+    case "slot":
+      return emitSlotNode(node as SlotNode);
     default:
       return "";
   }
@@ -94,7 +204,7 @@ function emitPage(page: PageIR): string {
 }
 
 function emitComponent(page: PageIR, componentName: string): string {
-  let code = "// @ts-nocheck\n\"use client\";\n";
+  let code = "// @ts-nocheck\n\"use client\";\nimport { useState } from \"react\";\n";
   // Imports region
   if (page.root && (page.root as any).customCode) {
     const cc = (page.root as any).customCode;
@@ -103,7 +213,10 @@ function emitComponent(page: PageIR, componentName: string): string {
     code += emitCustomCodeRegion("functions", cc.functions);
     code += emitCustomCodeRegion("effects", cc.effects);
   }
-  code += `\nexport default function ${componentName}(props: any) {\n  return (\n    ${emitNode(page.root)}\n  );\n}`;
+  const stateDeclarations = emitStateDeclarations(page);
+  code += `\nexport default function ${componentName}(props: any) {\n${stateDeclarations ? `${stateDeclarations}\n` : ""}  return (\n    ${emitNode(
+    page.root
+  )}\n  );\n}`;
   return code;
 }
 

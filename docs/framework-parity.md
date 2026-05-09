@@ -61,10 +61,28 @@ All framework adapters must preserve the same canonical IR semantics for core no
 - Emitters without native slot support must degrade to explicit placeholder regions while preserving slot identity metadata.
 - Parsers must reconstruct slot identity and fallback children where emitted markers exist.
 
+Implementation notes for next-react and vite-react:
+- Component slots are emitted as named region wrappers with data-builder-slot markers.
+- Slot nodes are emitted with data-builder-node="slot" and data-builder-slot-name markers.
+- Slot fallback content is emitted as the slot node body and parsed back into SlotNode.fallback.
+
+Known limitations:
+- Slot regions are represented through explicit marker wrappers rather than framework-native slot APIs.
+- Arbitrary manual edits that remove marker wrappers can break slot reconstruction.
+
 ### State Variable Contract
 - Page/state variables are canonical declarations with { name, type, initialValue, persist? }.
 - If a target adapter cannot emit state directly in this increment, it must preserve state in IR and avoid destructive parse behavior.
 - Future adapters must map this contract to native framework state primitives.
+
+Implementation notes for next-react and vite-react:
+- State variables are emitted as React useState declarations.
+- Each emitted state declaration includes a builder state owner marker comment.
+- Parsers recover state from useState declarations and owner markers, restoring component state arrays.
+
+Known limitations:
+- State reconstruction depends on preserved declaration format and owner marker comments.
+- Complex custom initializers beyond JSON-literals are preserved as raw text semantics where exact type inference is not guaranteed.
 
 ## Custom Code Regions
 

@@ -1,7 +1,7 @@
 import { parse } from "@babel/parser";
 import traverse from "@babel/traverse";
 import recast from "recast";
-import type { IRNode, ElementNode, TextNode, PageIR, ProjectIR } from "./types";
+import type { IRNode, ElementNode, TextNode, PageIR, ProjectIR, ComponentNode, SlotNode, StateVariable } from "./types";
 import type { FrameworkParser } from "./emitter";
 
 // Remove all custom code regions before parsing with recast
@@ -120,12 +120,94 @@ function extractPropValue(value: any): any {
   return null;
 }
 
+function extractStringAttributeValue(value: any): string {
+  const parsed = extractPropValue(value);
+  return typeof parsed === "string" ? parsed : "";
+}
+
 function generateCode(expr: any): string {
   try {
     return require("recast").print(expr).code;
   } catch {
     return "";
   }
+}
+
+function parseSerializedStateValue(serializedValue: string): unknown {
+  const trimmed = serializedValue.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+function parseStateDeclarationsFromCode(code: string): Map<string, StateVariable[]> {
+  const statesByOwner = new Map<string, StateVariable[]>();
+  const regex =
+    /const\s*\[\s*(\w+)\s*,\s*\w+\s*\]\s*=\s*useState(?:<([^>]+)>)?\(([^)]*)\);\s*\/\/\s*@builder:state\s+owner=([\w-]+)\s+type=([a-z]+)/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(code))) {
+    const [, name, inferredType, initialValueCode, owner, explicitType] = match;
+    const stateType = (explicitType || inferredType || "string") as StateVariable["type"];
+    const state: StateVariable = {
+      name,
+      type: stateType,
+      initialValue: parseSerializedStateValue(initialValueCode),
+    };
+    const existing = statesByOwner.get(owner) || [];
+    existing.push(state);
+    statesByOwner.set(owner, existing);
+  }
+
+  return statesByOwner;
+}
+
+function attachComponentStates(node: IRNode, statesByOwner: Map<string, StateVariable[]>): IRNode {
+  if (node.type === "component") {
+    const componentNode = node as ComponentNode;
+    const nextSlots: Record<string, IRNode[]> = {};
+    for (const [slotName, slotChildren] of Object.entries(componentNode.slots || {})) {
+      nextSlots[slotName] = slotChildren.map((child) => attachComponentStates(child, statesByOwner));
+    }
+    return {
+      ...componentNode,
+      slots: nextSlots,
+      state: statesByOwner.get(componentNode.id) || componentNode.state,
+    };
+  }
+
+  if (node.type === "slot") {
+    const slotNode = node as SlotNode;
+    return {
+      ...slotNode,
+      fallback: (slotNode.fallback || []).map((child) => attachComponentStates(child, statesByOwner)),
+    };
+  }
+
+  if (node.type === "element") {
+    const elementNode = node as ElementNode;
+    return {
+      ...elementNode,
+      children: (elementNode.children || []).map((child) => attachComponentStates(child, statesByOwner)),
+    };
+  }
+
+  return node;
 }
 
 function parseJSXElement(nodeOrPath: any): any {
@@ -150,6 +232,63 @@ function parseJSXElement(nodeOrPath: any): any {
 
   // 2. Determine tag name
   const tag = opening.name.type === "JSXIdentifier" ? opening.name.name : "div";
+
+  const nodeTypeAttr = findAttribute(opening, "data-builder-node");
+  const nodeType = nodeTypeAttr ? extractStringAttributeValue(nodeTypeAttr.value) : "";
+  const componentIdAttr = findAttribute(opening, "data-builder-component-id");
+  const componentId = componentIdAttr ? extractStringAttributeValue(componentIdAttr.value) : "";
+  const variantAttr = findAttribute(opening, "data-builder-variant");
+  const variant = variantAttr ? extractStringAttributeValue(variantAttr.value) : "";
+  const slotNameAttr = findAttribute(opening, "data-builder-slot-name");
+  const slotName = slotNameAttr ? extractStringAttributeValue(slotNameAttr.value) : "";
+  const slotRegionAttr = findAttribute(opening, "data-builder-slot");
+  const slotRegionName = slotRegionAttr ? extractStringAttributeValue(slotRegionAttr.value) : "";
+
+  if (
+    tag === "span" &&
+    node.children.length === 1 &&
+    (node.children[0].type === "JSXText" || node.children[0].type === "JSXExpressionContainer")
+  ) {
+    const spanStyles: Record<string, any> = {};
+    const spanClassAttr = findAttribute(opening, "className");
+    if (spanClassAttr && spanClassAttr.value && spanClassAttr.value.type === "StringLiteral") {
+      parseTailwindToStyles(spanClassAttr.value.value, spanStyles);
+    }
+    const inner = node.children[0];
+    if (inner.type === "JSXText") {
+      return {
+        id: nodeId,
+        type: "text",
+        content: inner.value.trim(),
+        styles: spanStyles,
+      };
+    }
+    const expr = inner.expression;
+    if (expr.type === "StringLiteral") {
+      return {
+        id: nodeId,
+        type: "text",
+        content: expr.value,
+        styles: spanStyles,
+      };
+    }
+    if (expr.type === "Identifier") {
+      return {
+        id: nodeId,
+        type: "text",
+        content: { binding: expr.name },
+        styles: spanStyles,
+      };
+    }
+    if (expr.type === "MemberExpression") {
+      return {
+        id: nodeId,
+        type: "text",
+        content: { binding: generateCode(expr) },
+        styles: spanStyles,
+      };
+    }
+  }
 
   // 3. Extract styles from className + inline style
   const styles: Record<string, any> = {};
@@ -186,7 +325,18 @@ function parseJSXElement(nodeOrPath: any): any {
   opening.attributes.forEach((attr: any) => {
     if (attr.type !== "JSXAttribute") return;
     const name = attr.name.name;
-    if (name === "data-builder-id" || name === "style" || name === "className" || /^on[A-Z]/.test(name)) return;
+    if (
+      name === "data-builder-id" ||
+      name === "data-builder-node" ||
+      name === "data-builder-component-id" ||
+      name === "data-builder-variant" ||
+      name === "data-builder-slot-name" ||
+      name === "data-builder-slot" ||
+      name === "style" ||
+      name === "className" ||
+      /^on[A-Z]/.test(name)
+    )
+      return;
     props[name] = extractPropValue(attr.value);
   });
 
@@ -274,6 +424,14 @@ function parseJSXElement(nodeOrPath: any): any {
                 styles: childStyles,
               };
             }
+            if (expr.type === "Identifier") {
+              return {
+                id: childId,
+                type: "text",
+                content: { binding: expr.name },
+                styles: childStyles,
+              };
+            }
             if (expr.type === "MemberExpression") {
               return {
                 id: childId,
@@ -308,6 +466,9 @@ function parseJSXElement(nodeOrPath: any): any {
         if (expr.type === "StringLiteral") {
           return { id: generateId(), type: "text", content: expr.value, styles: {} };
         }
+        if (expr.type === "Identifier") {
+          return { id: generateId(), type: "text", content: { binding: expr.name }, styles: {} };
+        }
         if (expr.type === "MemberExpression") {
           return { id: generateId(), type: "text", content: { binding: generateCode(expr) }, styles: {} };
         }
@@ -315,6 +476,72 @@ function parseJSXElement(nodeOrPath: any): any {
       return null;
     })
     .filter(Boolean);
+
+  if (nodeType === "slot") {
+    return {
+      id: nodeId,
+      type: "slot",
+      slotName,
+      fallback: children,
+    } as SlotNode;
+  }
+
+  if (nodeType === "component") {
+    const slots: Record<string, IRNode[]> = {};
+
+    node.children.forEach((child: any) => {
+      if (child.type !== "JSXElement") return;
+      const childOpening = child.openingElement;
+      const slotAttr = findAttribute(childOpening, "data-builder-slot");
+      if (!slotAttr) return;
+      const name = extractStringAttributeValue(slotAttr.value);
+      const slotChildren = child.children
+        .map((slotChild: any) => {
+          if (slotChild.type === "JSXElement") {
+            return parseJSXElement(slotChild);
+          }
+          if (slotChild.type === "JSXText") {
+            const text = slotChild.value.trim();
+            if (!text) return null;
+            return { id: generateId(), type: "text", content: text, styles: {} };
+          }
+          if (slotChild.type === "JSXExpressionContainer") {
+            const expr = slotChild.expression;
+            if (expr.type === "StringLiteral") {
+              return { id: generateId(), type: "text", content: expr.value, styles: {} };
+            }
+            if (expr.type === "Identifier") {
+              return { id: generateId(), type: "text", content: { binding: expr.name }, styles: {} };
+            }
+            if (expr.type === "MemberExpression") {
+              return { id: generateId(), type: "text", content: { binding: generateCode(expr) }, styles: {} };
+            }
+          }
+          return null;
+        })
+        .filter(Boolean) as IRNode[];
+      slots[name] = slotChildren;
+    });
+
+    const componentNode: ComponentNode = {
+      id: nodeId,
+      type: "component",
+      componentId,
+      props,
+      slots,
+    };
+    if (variant) {
+      componentNode.variant = variant;
+    }
+    if (events.length > 0) {
+      componentNode.events = events;
+    }
+    return componentNode;
+  }
+
+  if (slotRegionName) {
+    return children;
+  }
 
   // Special case: if this is the root hero section, add name field
   let ir: any = {
@@ -390,6 +617,10 @@ export function parseReactComponentIR(code: string, options: ParseReactComponent
     },
   });
   if (!root) throw new Error("No root JSX found");
+
+  const statesByOwner = parseStateDeclarationsFromCode(codeForParse);
+  root = attachComponentStates(root, statesByOwner);
+
   // Attach customCode to root if present
   if (root && Object.keys(customCode).length > 0) {
     (root as any).customCode = customCode;
@@ -400,7 +631,7 @@ export function parseReactComponentIR(code: string, options: ParseReactComponent
     route: options.route ?? "/",
     root,
     meta: {},
-    state: [],
+    state: statesByOwner.get("page") || [],
   };
 }
 
