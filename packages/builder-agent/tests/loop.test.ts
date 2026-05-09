@@ -24,17 +24,16 @@ describe("builder agent loop", () => {
     expect(result.stepLog.length).toBeGreaterThan(0);
   });
 
-  it("runs the security audit benchmark in detect-and-report mode", async () => {
+  it("runs the security audit benchmark in auto-fix mode", async () => {
     const result = await runAgentLoop({
       prompt: benchmarkAudit.prompt,
       projectId: benchmarkAudit.startingProjectState.projectId,
       initialCode: benchmarkAudit.startingProjectState.files["src/app/page.tsx"],
       benchmarkId: "security-accessibility-audit",
       validate: async ({ initialState, finalState }) => ({
-        passed: initialState.code === finalState.code && finalState.issues.length > 0,
-        partial: true,
-        benchmarkPassed: finalState.issues.length > 0,
-        message: "Reported severity-rated issues without mutating source.",
+        passed: initialState.code !== finalState.code && finalState.issues.length === 0,
+        benchmarkPassed: initialState.code !== finalState.code && finalState.issues.length === 0,
+        message: "Auto-fixed benchmark issues without redesigning the page.",
         details: finalState.issues,
         typecheckPassed: true,
         buildPassed: true
@@ -42,7 +41,77 @@ describe("builder agent loop", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.finalState.issues.length).toBeGreaterThan(0);
-    expect(result.finalState.issues.every((issue) => issue.severity)).toBe(true);
+    expect(result.finalState.issues.length).toBe(0);
+    expect(result.finalState.code).toContain("rel=\"noreferrer\"");
+  });
+
+  it("continues after a failed step when continueOnError is enabled", async () => {
+    const brokenIrSnapshot = JSON.stringify({
+      id: "broken-page",
+      name: "Page",
+      route: "/",
+      meta: {},
+      state: [],
+      root: {
+        id: "broken-root",
+        type: "text",
+        content: "Not an element root",
+        styles: {}
+      }
+    });
+
+    const result = await runAgentLoop({
+      prompt: "Create a blue button that says Subscribe.",
+      projectId: "continue-on-error-project",
+      initialIrSnapshot: brokenIrSnapshot,
+      benchmarkId: "single-element-creation",
+      continueOnError: true,
+      validate: async ({ finalState }) => ({
+        passed: finalState.ir.id === "broken-page",
+        benchmarkPassed: true,
+        message: "Validation passed after recovery.",
+        typecheckPassed: true,
+        buildPassed: true
+      })
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.stepLog.some((entry) => entry.phase === "act" && entry.status === "skipped")).toBe(true);
+    expect(result.stepLog.some((entry) => entry.phase === "rollback" && entry.message.includes("Restored last clean snapshot"))).toBe(true);
+  });
+
+  it("halts after a failed step when continueOnError is disabled", async () => {
+    const brokenIrSnapshot = JSON.stringify({
+      id: "broken-page",
+      name: "Page",
+      route: "/",
+      meta: {},
+      state: [],
+      root: {
+        id: "broken-root",
+        type: "text",
+        content: "Not an element root",
+        styles: {}
+      }
+    });
+
+    const result = await runAgentLoop({
+      prompt: "Create a blue button that says Subscribe.",
+      projectId: "halt-on-error-project",
+      initialIrSnapshot: brokenIrSnapshot,
+      benchmarkId: "single-element-creation",
+      continueOnError: false,
+      validate: async () => ({
+        passed: true,
+        benchmarkPassed: true,
+        message: "Validation passed.",
+        typecheckPassed: true,
+        buildPassed: true
+      })
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.stepLog.some((entry) => entry.phase === "act" && entry.status === "skipped")).toBe(true);
+    expect(result.stepLog.some((entry) => entry.phase === "report" && entry.status === "partial")).toBe(true);
   });
 });

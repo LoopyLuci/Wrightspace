@@ -107,7 +107,7 @@ function analyzeSecurityAndAccessibility(projectState: AgentProjectState): Agent
     });
   }
 
-  if (/<input[^>]+placeholder=/.test(code) && !/<label/.test(code)) {
+  if (/<input[^>]+placeholder=/.test(code) && !/<label/.test(code) && !/aria-label=/.test(code)) {
     issues.push({
       code: "missing-form-label",
       severity: "high",
@@ -134,7 +134,100 @@ function analyzeSecurityAndAccessibility(projectState: AgentProjectState): Agent
     });
   }
 
+  const imgWithoutAlt = /<img\b(?![^>]*\balt=)[^>]*>/g;
+  if (imgWithoutAlt.test(code)) {
+    issues.push({
+      code: "img-alt-missing",
+      severity: "medium",
+      message: "Image element is missing alt text.",
+      suggestion: "Add an alt attribute to each image, even if decorative."
+    });
+  }
+
+  const unlabeledButton = /<button\b([^>]*)>(\s*)<\/button>/g;
+  if (unlabeledButton.test(code)) {
+    issues.push({
+      code: "button-label-missing",
+      severity: "medium",
+      message: "Button is missing an accessible label.",
+      suggestion: "Add visible button text or an aria-label attribute."
+    });
+  }
+
   return issues;
+}
+
+function ensureRelNoreferrer(code: string): string {
+  return code.replace(/<a\b([^>]*)>/g, (full, attrs: string) => {
+    if (!/target\s*=\s*"_blank"/.test(attrs)) {
+      return full;
+    }
+
+    if (/\brel\s*=/.test(attrs)) {
+      return full.replace(/rel\s*=\s*"([^"]*)"/, (_match, relValue: string) => {
+        if (/(^|\s)noreferrer(\s|$)/.test(relValue)) {
+          return `rel="${relValue}"`;
+        }
+        return `rel="${relValue.trim()} noreferrer"`;
+      });
+    }
+
+    return `<a${attrs} rel="noreferrer">`;
+  });
+}
+
+function ensureInputLabels(code: string): string {
+  return code.replace(/<input\b([^>]*?)(\s*\/?)>/g, (full, attrs: string, closing: string) => {
+    if (/\baria-label\s*=/.test(attrs)) {
+      return full;
+    }
+
+    const placeholderMatch = attrs.match(/placeholder\s*=\s*"([^"]+)"/);
+    if (!placeholderMatch) {
+      return full;
+    }
+
+    return `<input${attrs} aria-label="${placeholderMatch[1]}"${closing}>`;
+  });
+}
+
+function fixButtonSemantics(code: string): string {
+  const fromRoleButton = code.replace(
+    /<div\b([^>]*)role="button"([^>]*)>([\s\S]*?)<\/div>/g,
+    (_full, _before: string, _after: string, inner: string) => {
+      const text = inner.replace(/<[^>]+>/g, "").trim();
+      const label = text.length > 0 ? text : "Action";
+      return `<button type="button" aria-label="${label}">${inner}</button>`;
+    }
+  );
+
+  const removeTabIndex = fromRoleButton.replace(/\s+tabIndex=\{0\}/g, "");
+
+  return removeTabIndex.replace(/<button\b([^>]*)>(\s*)<\/button>/g, (full, attrs: string) => {
+    if (/\baria-label\s*=/.test(attrs)) {
+      return full;
+    }
+    return `<button${attrs} aria-label="Action"></button>`;
+  });
+}
+
+function ensureImageAlt(code: string): string {
+  return code.replace(/<img\b([^>]*?)>/g, (full, attrs: string) => {
+    if (/\balt\s*=/.test(attrs)) {
+      return full;
+    }
+
+    return `<img${attrs} alt="Image">`;
+  });
+}
+
+function applyAuditAutoFixes(code: string): string {
+  let nextCode = code;
+  nextCode = ensureRelNoreferrer(nextCode);
+  nextCode = ensureInputLabels(nextCode);
+  nextCode = fixButtonSemantics(nextCode);
+  nextCode = ensureImageAlt(nextCode);
+  return nextCode;
 }
 
 function applyWithSync(projectState: AgentProjectState, nextPage: PageIR): AgentProjectState {
@@ -245,6 +338,15 @@ export function executeStep(projectState: AgentProjectState, step: AgentStep): A
     return {
       ...projectState,
       issues: analyzeSecurityAndAccessibility(projectState)
+    };
+  }
+
+  if (step.metadata?.variant === "security-a11y-autofix") {
+    const fixedCode = applyAuditAutoFixes(projectState.code);
+    const nextState = applyCodeSnapshot(projectState, fixedCode);
+    return {
+      ...nextState,
+      issues: analyzeSecurityAndAccessibility(nextState)
     };
   }
 

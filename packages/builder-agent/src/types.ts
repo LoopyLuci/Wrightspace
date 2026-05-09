@@ -27,14 +27,22 @@ export interface AgentProjectState {
   issues: AgentIssue[];
 }
 
+export interface AgentSnapshot {
+  code: string;
+  irSnapshot: string;
+  issues: AgentIssue[];
+}
+
 export interface AgentLogEntry {
   phase: "plan" | "act" | "validate" | "report" | "rollback";
-  status: "success" | "partial" | "error";
+  status: "success" | "partial" | "error" | "skipped";
   message: string;
   stepDescription?: string;
   details?: unknown;
   durationMs?: number;
   tokenCount?: number;
+  stepIndex?: number;
+  rollbackSnapshot?: AgentSnapshot;
 }
 
 export interface AgentValidationResult {
@@ -53,6 +61,7 @@ export interface AgentLoopOptions {
   initialCode?: string;
   initialIrSnapshot?: string | null;
   benchmarkId?: string;
+  continueOnError?: boolean;
   validate?: (input: {
     prompt: string;
     benchmarkId?: string;

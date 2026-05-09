@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { runAgentLoop, type AgentLogEntry } from "@builder/agent";
+import { runAgentLoop, type AgentLogEntry, type AgentSnapshot } from "@builder/agent";
 import { CommandBar } from "@builder/ai";
 import { IdeShell } from "@builder/ide";
 import type { IRNode, PageIR } from "../../builder-ir/dist/src/types.js";
@@ -286,6 +286,50 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
     }
   };
 
+  const completedActLogIndexes = useMemo(() => {
+    return agentRun.logs.reduce<number[]>((acc, entry, index) => {
+      if (entry.phase === "act" && (entry.status === "success" || entry.status === "partial") && entry.rollbackSnapshot) {
+        acc.push(index);
+      }
+      return acc;
+    }, []);
+  }, [agentRun.logs]);
+
+  const latestCompletedActLogIndex = completedActLogIndexes.length > 0
+    ? completedActLogIndexes[completedActLogIndexes.length - 1]
+    : -1;
+
+  const handleRevertLogStep = (logIndex: number) => {
+    if (logIndex === latestCompletedActLogIndex) {
+      return;
+    }
+
+    const entry = agentRun.logs[logIndex];
+    const snapshot = entry?.rollbackSnapshot as AgentSnapshot | undefined;
+    if (!snapshot) {
+      return;
+    }
+
+    try {
+      const nextIr = JSON.parse(snapshot.irSnapshot);
+      doc.transact(() => {
+        workspace.set("ir", JSON.stringify(nextIr, null, 2));
+        workspace.set("code", snapshot.code);
+      }, EDITOR_ORIGIN);
+      setYText(sourceText, snapshot.code, EDITOR_ORIGIN);
+
+      const stepNumber = agentRun.logs
+        .slice(0, logIndex + 1)
+        .filter((logEntry) => logEntry.phase === "act" && (logEntry.status === "success" || logEntry.status === "partial"))
+        .length;
+
+      setNotice({ kind: "success", message: `Reverted step ${stepNumber}. Project restored.` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setNotice({ kind: "error", message: `Revert failed: ${message}` });
+    }
+  };
+
   const pollDeploymentStatus = async (deploymentId: string) => {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -458,6 +502,11 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
               const reportDetails = entry.phase === "report" && entry.details !== undefined
                 ? JSON.stringify(entry.details, null, 2)
                 : null;
+              const canRevert =
+                entry.phase === "act"
+                && (entry.status === "success" || entry.status === "partial")
+                && Boolean(entry.rollbackSnapshot);
+              const isMostRecentCompletedStep = canRevert && index === latestCompletedActLogIndex;
 
               return (
                 <li key={`${entry.phase}-${index}`}>
@@ -471,6 +520,18 @@ export function WorkspaceShell({ projectId }: WorkspaceShellProps) {
                       {", "}
                       {entry.tokenCount !== undefined ? `${entry.tokenCount} tokens` : "n/a"}
                       ]
+                    </span>
+                  )}
+                  {canRevert && (
+                    <span className="workspace-agent-log-actions">
+                      <button
+                        type="button"
+                        className="workspace-btn"
+                        onClick={() => handleRevertLogStep(index)}
+                        disabled={agentRun.running || isMostRecentCompletedStep}
+                      >
+                        Revert
+                      </button>
                     </span>
                   )}
                   {reportDetails ? <pre>{reportDetails}</pre> : null}

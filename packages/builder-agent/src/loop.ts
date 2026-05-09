@@ -15,6 +15,7 @@ function defaultValidation(finalState: AgentProjectState): AgentValidationResult
 
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const stepLog: AgentLoopResult["stepLog"] = [];
+  const continueOnError = options.continueOnError ?? true;
   const initialState = createInitialProjectState({
     projectId: options.projectId,
     initialCode: options.initialCode,
@@ -45,39 +46,80 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   let currentState = initialState;
   let lastCleanSnapshot = createSnapshot(initialState);
+  const skippedSteps: string[] = [];
+  let haltedOnStepError = false;
 
   try {
-    for (const step of plan) {
+    for (let stepIndex = 0; stepIndex < plan.length; stepIndex += 1) {
+      const step = plan[stepIndex];
+      const beforeStepSnapshot = createSnapshot(currentState);
       const stepStartedAt = Date.now();
-      currentState = executeStep(currentState, step);
-      const actDurationMs = Date.now() - stepStartedAt;
-
       const stepTokenCount =
         typeof step.metadata?.tokenCount === "number" ? step.metadata.tokenCount : defaultStepTokenCount;
 
-      const validateStartedAt = Date.now();
-      validatePageIR(currentState.ir);
-      const validateDurationMs = Date.now() - validateStartedAt;
-      lastCleanSnapshot = createSnapshot(currentState);
+      try {
+        currentState = executeStep(currentState, step);
+        const actDurationMs = Date.now() - stepStartedAt;
 
-      stepLog.push({
-        phase: "act",
-        status: step.mode === "report" ? "partial" : "success",
-        message: step.mode === "report" ? "Analyzed current page and recorded issues." : "Applied planned step.",
-        stepDescription: step.description,
-        details: step.mode === "report" ? currentState.issues : step.expectedDiff,
-        durationMs: actDurationMs,
-        tokenCount: stepTokenCount
-      });
+        const validateStartedAt = Date.now();
+        validatePageIR(currentState.ir);
+        const validateDurationMs = Date.now() - validateStartedAt;
+        lastCleanSnapshot = createSnapshot(currentState);
 
-      stepLog.push({
-        phase: "validate",
-        status: "success",
-        message: "IR remained valid after step.",
-        stepDescription: step.description,
-        durationMs: validateDurationMs,
-        tokenCount: stepTokenCount
-      });
+        stepLog.push({
+          phase: "act",
+          status: step.mode === "report" ? "partial" : "success",
+          message: step.mode === "report" ? "Analyzed current page and recorded issues." : "Applied planned step.",
+          stepDescription: step.description,
+          details: step.mode === "report" ? currentState.issues : step.expectedDiff,
+          durationMs: actDurationMs,
+          tokenCount: stepTokenCount,
+          stepIndex,
+          rollbackSnapshot: beforeStepSnapshot
+        });
+
+        stepLog.push({
+          phase: "validate",
+          status: "success",
+          message: "IR remained valid after step.",
+          stepDescription: step.description,
+          durationMs: validateDurationMs,
+          tokenCount: stepTokenCount,
+          stepIndex
+        });
+      } catch (stepError) {
+        const stepMessage = stepError instanceof Error ? stepError.message : String(stepError);
+        const stepDurationMs = Date.now() - stepStartedAt;
+        skippedSteps.push(`Step ${stepIndex + 1}: ${stepMessage}`);
+
+        stepLog.push({
+          phase: "act",
+          status: "skipped",
+          message: "Step failed validation and was skipped.",
+          stepDescription: step.description,
+          details: {
+            reason: stepMessage
+          },
+          durationMs: stepDurationMs,
+          tokenCount: stepTokenCount,
+          stepIndex,
+          rollbackSnapshot: beforeStepSnapshot
+        });
+
+        currentState = restoreSnapshot(currentState.projectId, lastCleanSnapshot);
+        stepLog.push({
+          phase: "rollback",
+          status: "success",
+          message: `Restored last clean snapshot after step ${stepIndex + 1} failure.`,
+          details: stepMessage,
+          stepIndex
+        });
+
+        if (!continueOnError) {
+          haltedOnStepError = true;
+          break;
+        }
+      }
     }
 
     const validation = options.validate
@@ -90,10 +132,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         })
       : defaultValidation(currentState);
 
+    const reportMessage = skippedSteps.length > 0
+      ? `${validation.message} (${skippedSteps.length} step${skippedSteps.length === 1 ? "" : "s"} skipped)`
+      : validation.message;
+
     stepLog.push({
       phase: "report",
-      status: validation.passed ? "success" : validation.partial ? "partial" : "error",
-      message: validation.message,
+      status: validation.passed
+        ? skippedSteps.length > 0 || haltedOnStepError ? "partial" : "success"
+        : validation.partial ? "partial" : "error",
+      message: reportMessage,
       details: validation.details,
       tokenCount: totalPlanTokens
     });
@@ -116,7 +164,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     }
 
     return {
-      ok: true,
+      ok: validation.passed && !haltedOnStepError,
       stepLog,
       finalState: currentState,
       validation

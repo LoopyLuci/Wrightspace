@@ -38,6 +38,54 @@ vi.mock("@builder/agent", () => {
           message: "Planned 1 step."
         },
         {
+          phase: "act",
+          status: "success",
+          message: "Applied first step.",
+          stepDescription: "First step",
+          rollbackSnapshot: {
+            code: "export default function Page() { return <main>before-first</main>; }",
+            irSnapshot: JSON.stringify({
+              id: "page-id",
+              name: "Page",
+              route: "/",
+              meta: {},
+              root: {
+                id: "root",
+                type: "element",
+                tag: "main",
+                styles: {},
+                props: {},
+                children: []
+              }
+            }),
+            issues: []
+          }
+        },
+        {
+          phase: "act",
+          status: "success",
+          message: "Applied second step.",
+          stepDescription: "Second step",
+          rollbackSnapshot: {
+            code: "export default function Page() { return <main>before-second</main>; }",
+            irSnapshot: JSON.stringify({
+              id: "page-id",
+              name: "Page",
+              route: "/",
+              meta: {},
+              root: {
+                id: "root",
+                type: "element",
+                tag: "main",
+                styles: {},
+                props: {},
+                children: []
+              }
+            }),
+            issues: []
+          }
+        },
+        {
           phase: "report",
           status: "success",
           message: "Agent loop finished."
@@ -91,5 +139,12 @@ describe("WorkspaceShell agent loop", () => {
 
     expect(screen.getByText(/Planned 1 step/)).toBeTruthy();
     expect(screen.getByLabelText("Agent step log").textContent).toContain("Agent loop finished.");
+
+    const revertButtons = screen.getAllByRole("button", { name: "Revert" });
+    expect(revertButtons).toHaveLength(2);
+    expect((revertButtons[1] as HTMLButtonElement).disabled).toBe(true);
+
+    await user.click(revertButtons[0]);
+    expect(screen.getByText("Reverted step 1. Project restored.")).toBeTruthy();
   });
 });

@@ -70,17 +70,38 @@ function checkSingleElement(prompt: string, state: AgentProjectState): AgentVali
 }
 
 function checkAudit(initialState: AgentProjectState, finalState: AgentProjectState): AgentValidationResult {
-  const unchanged = initialState.code === finalState.code;
-  const issuesHaveSeverity = finalState.issues.length > 0 && finalState.issues.every((issue) => Boolean(issue.severity));
+  const code = finalState.code;
+  const fixedExternalLinks = !/target="_blank"(?![^>]*rel="[^"]*noreferrer)/.test(code);
+  const fixedFormLabels = !/<input[^>]+placeholder=/.test(code) || /<input[^>]+aria-label=/.test(code) || /<label/.test(code);
+  const fixedButtonSemantics = !/role="button"/.test(code) && /<button/.test(code);
+  const fixedImageAlt = !/<img\b(?![^>]*\balt=)[^>]*>/.test(code);
+  const fixedButtonLabel = !/<button\b[^>]*>\s*<\/button>/.test(code);
+  const mutated = initialState.code !== finalState.code;
+  const unresolvedIssues = finalState.issues.length;
+
+  const passed =
+    mutated
+    && fixedExternalLinks
+    && fixedFormLabels
+    && fixedButtonSemantics
+    && fixedImageAlt
+    && fixedButtonLabel
+    && unresolvedIssues === 0;
 
   return {
-    passed: unchanged && issuesHaveSeverity,
-    partial: unchanged && issuesHaveSeverity,
-    benchmarkPassed: unchanged && issuesHaveSeverity,
-    message: unchanged && issuesHaveSeverity
-      ? "Security and accessibility issues were detected and reported with severity ratings."
-      : "Audit run did not preserve source or did not report severity-rated issues.",
-    details: finalState.issues
+    passed,
+    benchmarkPassed: passed,
+    message: passed
+      ? "Security and accessibility issues were auto-fixed successfully."
+      : "Audit auto-fix did not fully resolve required security/accessibility rules.",
+    details: {
+      unresolvedIssues,
+      fixedExternalLinks,
+      fixedFormLabels,
+      fixedButtonSemantics,
+      fixedImageAlt,
+      fixedButtonLabel
+    }
   };
 }
 

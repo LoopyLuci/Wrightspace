@@ -122,11 +122,12 @@ function attachExecutionHints(plan: AgentStep[], prompt: string, benchmarkId?: s
 
   return plan.map((step, index) => {
     const metadata = { ...(step.metadata ?? {}) };
-    if (benchmarkId === "security-accessibility-audit" || step.mode === "report") {
+    if (benchmarkId === "security-accessibility-audit") {
+      metadata.variant = "security-a11y-autofix";
       metadata.audit = ["external-links", "form-labels", "button-semantics", "keyboard-navigation"];
       return {
         ...step,
-        mode: "report",
+        mode: "apply",
         metadata
       };
     }
@@ -197,12 +198,13 @@ function createButtonPlan(prompt: string): AgentStep[] {
 function createSecurityAuditPlan(): AgentStep[] {
   return [
     {
-      description: "Audit the current page for security and accessibility issues",
+      description: "Audit and auto-fix security and accessibility issues",
       target: "page:/",
       action: "update",
-      expectedDiff: "Produce severity-rated findings and suggested fixes without destructive edits.",
-      mode: "report",
+      expectedDiff: "Fix unsafe external links, missing labels, and non-semantic controls without redesigning the page.",
+      mode: "apply",
       metadata: {
+        variant: "security-a11y-autofix",
         audit: ["external-links", "form-labels", "button-semantics", "keyboard-navigation"]
       }
     }

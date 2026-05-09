@@ -73,7 +73,7 @@ describe("builder agent benchmark integration", () => {
   );
 
   it(
-    "passes the audit benchmark in detect-and-report mode with severity ratings",
+    "passes the audit benchmark in detect-and-auto-fix mode",
     async () => {
       const result = await runAgentLoop({
         prompt: benchmarkAudit.prompt,
@@ -84,11 +84,13 @@ describe("builder agent benchmark integration", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(result.validation.partial).toBe(true);
+      expect(result.validation.passed).toBe(true);
       expect(result.validation.typecheckPassed).toBe(true);
       expect(result.validation.buildPassed).toBe(true);
-      expect(result.finalState.issues.length).toBeGreaterThan(0);
-      expect(result.finalState.issues.every((issue) => issue.severity)).toBe(true);
+      expect(result.finalState.issues.length).toBe(0);
+      expect(result.finalState.code).toContain("rel=\"noreferrer\"");
+      expect(result.finalState.code).toContain("aria-label");
+      expect(result.finalState.code).toContain("<button");
       expect(result.stepLog.some((entry) => entry.phase === "act" && typeof entry.durationMs === "number")).toBe(true);
       expect(result.stepLog.some((entry) => typeof entry.tokenCount === "number")).toBe(true);
     },

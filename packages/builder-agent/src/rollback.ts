@@ -1,10 +1,4 @@
-import type { AgentProjectState } from "./types";
-
-export interface AgentSnapshot {
-  code: string;
-  irSnapshot: string;
-  issues: AgentProjectState["issues"];
-}
+import type { AgentProjectState, AgentSnapshot } from "./types";
 
 export function createSnapshot(state: AgentProjectState): AgentSnapshot {
   return {
