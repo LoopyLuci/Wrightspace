@@ -1,0 +1,13 @@
+{
+  "id": "responsive-refactor",
+  "title": "Responsive Refactor",
+  "prompt": "Refactor this landing page hero so it stacks cleanly on mobile, keeps the image below the copy on narrow screens, and avoids horizontal overflow. Preserve the current content and intent.",
+  "expectedOutcome": "The agent updates layout and styling so the hero becomes responsive across desktop and mobile breakpoints, without changing the product copy or removing the visual asset.",
+  "startingProjectState": {
+    "type": "minimal-project",
+    "projectId": "benchmark-responsive-refactor",
+    "files": {
+      "src/app/page.tsx": "export default function Page() {\n  return (\n    <main style={{ padding: '2rem' }}>\n      <section\n        style={{\n          display: 'flex',\n          flexDirection: 'row',\n          gap: '2rem',\n          minWidth: '1200px',\n          alignItems: 'center'\n        }}\n      >\n        <div>\n          <h1>Build products visually</h1>\n          <p>Ship clean React code without rewriting your work.</p>\n        </div>\n        <img\n          src=\"https://placehold.co/640x420\"\n          alt=\"Product preview\"\n          width={640}\n          height={420}\n        />\n      </section>\n    </main>\n  );\n}\n"
+    }
+  }
+}

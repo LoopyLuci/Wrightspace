@@ -1,0 +1,11 @@
+{
+  "id": "multi-page-scaffold",
+  "title": "Multi-Page Scaffold",
+  "prompt": "Scaffold a marketing site for a SaaS product with a home page, pricing page, and contact page. Add basic navigation linking the three pages and keep the layout simple and production-ready.",
+  "expectedOutcome": "The agent creates a minimal but coherent multi-page app structure with routed pages, shared navigation, and buildable code without breaking the existing project shell.",
+  "startingProjectState": {
+    "type": "empty-project",
+    "projectId": "benchmark-multi-page",
+    "files": {}
+  }
+}

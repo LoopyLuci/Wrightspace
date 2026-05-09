@@ -1,0 +1,26 @@
+{
+  "suite": "agentic-builder",
+  "version": 1,
+  "benchmarks": [
+    {
+      "id": "single-element-creation",
+      "title": "Single-Element Creation",
+      "file": "single-element-creation.json"
+    },
+    {
+      "id": "multi-page-scaffold",
+      "title": "Multi-Page Scaffold",
+      "file": "multi-page-scaffold.json"
+    },
+    {
+      "id": "responsive-refactor",
+      "title": "Responsive Refactor",
+      "file": "responsive-refactor.json"
+    },
+    {
+      "id": "security-accessibility-audit",
+      "title": "Security and Accessibility Audit",
+      "file": "security-accessibility-audit.json"
+    }
+  ]
+}

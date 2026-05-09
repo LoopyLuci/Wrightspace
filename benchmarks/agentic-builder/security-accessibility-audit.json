@@ -1,0 +1,13 @@
+{
+  "id": "security-accessibility-audit",
+  "title": "Security and Accessibility Audit",
+  "prompt": "Audit this page for basic security and accessibility issues. Fix unsafe external links, missing form labels, poor button semantics, and obvious keyboard-navigation problems. Do not redesign the page.",
+  "expectedOutcome": "The agent identifies and repairs common security and accessibility issues while keeping the UI recognizable, including safer link handling, labeled form fields, semantic controls, and improved keyboard usability.",
+  "startingProjectState": {
+    "type": "minimal-project",
+    "projectId": "benchmark-security-a11y",
+    "files": {
+      "src/app/page.tsx": "export default function Page() {\n  return (\n    <main style={{ padding: '2rem' }}>\n      <h1>Account access</h1>\n      <form>\n        <div>\n          <input type=\"email\" placeholder=\"Email\" />\n        </div>\n        <div>\n          <input type=\"password\" placeholder=\"Password\" />\n        </div>\n        <div role=\"button\" tabIndex={0}>Sign in</div>\n      </form>\n      <p>\n        Need help?\n        <a href=\"https://example.com/support\" target=\"_blank\">Contact support</a>\n      </p>\n    </main>\n  );\n}\n"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "single-element-creation",
+  "title": "Single-Element Creation",
+  "prompt": "Create a centered call-to-action button labeled Start Free Trial below the main hero heading. Keep the existing page structure intact and use accessible button text.",
+  "expectedOutcome": "The agent adds exactly one new interactive CTA element in the hero area, preserves surrounding content, and keeps the result valid for both visual canvas rendering and code sync.",
+  "startingProjectState": {
+    "type": "minimal-project",
+    "projectId": "benchmark-single-element",
+    "files": {
+      "src/app/page.tsx": "export default function Page() {\n  return (\n    <main style={{ padding: '4rem 2rem', textAlign: 'center' }}>\n      <h1>Launch faster with WebBuilder</h1>\n      <p>Design visually, edit in code, and ship without lock-in.</p>\n    </main>\n  );\n}\n"
+    }
+  }
+}
