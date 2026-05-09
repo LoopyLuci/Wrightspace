@@ -11,10 +11,12 @@
     "lint": "echo \"No lints configured yet\""
   },
   "dependencies": {
+    "react": "19.0.0",
     "yjs": "^13.6.27",
     "y-websocket": "^3.0.0"
   },
   "devDependencies": {
+    "@types/react": "^19.1.2",
     "typescript": "^5.8.3",
     "vitest": "^2.1.8"
   }

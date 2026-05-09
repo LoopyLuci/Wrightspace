@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+export { CommandBar } from "./command-bar";
+export { generateComponent } from "./pipeline";
+export type { GenerateComponentOptions } from "./pipeline";
+
 export const BuildCommandSchema = z.object({
   prompt: z.string().min(1)
 });

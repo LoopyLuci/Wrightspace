@@ -1,9 +1,10 @@
 {
-  "name": "@builder/ai",
+  "name": "@builder/sync",
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./fixtures": "./src/fixtures.ts"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,14 +16,9 @@
   },
   "dependencies": {
     "@builder/ir": "workspace:*",
-    "react": "19.0.0",
-    "zod": "^3.24.4"
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/react": "^19.1.2",
-    "jsdom": "^25.0.1",
     "typescript": "^5.8.3",
     "vitest": "^2.1.8"
   }
