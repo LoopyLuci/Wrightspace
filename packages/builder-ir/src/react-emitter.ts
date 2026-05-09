@@ -8,6 +8,7 @@ import type {
   SlotNode,
   ResponsiveStyles,
 } from "./types";
+import type { FrameworkEmitter } from "./emitter";
 
 // Utility: map ResponsiveStyles to Tailwind classes (base breakpoint only)
 function stylesToTailwind(styles: ResponsiveStyles): string {
@@ -89,7 +90,11 @@ function emitCustomCodeRegion(label: string, code?: string): string {
 }
 
 function emitPage(page: PageIR): string {
-  let code = "";
+  return emitComponent(page, "Page");
+}
+
+function emitComponent(page: PageIR, componentName: string): string {
+  let code = "// @ts-nocheck\n\"use client\";\n";
   // Imports region
   if (page.root && (page.root as any).customCode) {
     const cc = (page.root as any).customCode;
@@ -98,7 +103,7 @@ function emitPage(page: PageIR): string {
     code += emitCustomCodeRegion("functions", cc.functions);
     code += emitCustomCodeRegion("effects", cc.effects);
   }
-  code += `\nexport default function Page() {\n  return (\n    ${emitNode(page.root)}\n  );\n}`;
+  code += `\nexport default function ${componentName}(props: any) {\n  return (\n    ${emitNode(page.root)}\n  );\n}`;
   return code;
 }
 
@@ -110,4 +115,81 @@ export function generateProject(ir: ProjectIR): Record<string, string> {
   }
   // TODO: emit components, assets, etc.
   return files;
+}
+
+export function emitNextPage(page: PageIR): string {
+  return emitPage(page);
+}
+
+export function emitViteApp(page: PageIR): string {
+  return emitComponent(page, "App");
+}
+
+function emitNextProjectScaffold(page: PageIR): Record<string, string> {
+  const pageCode = emitNextPage(page);
+  return {
+    "package.json": JSON.stringify(
+      {
+        name: "builder-next-app",
+        private: true,
+        version: "0.0.0",
+        scripts: {
+          build: "next build",
+        },
+        dependencies: {
+          next: "15.3.2",
+          react: "19.1.0",
+          "react-dom": "19.1.0",
+        },
+        devDependencies: {
+          "@types/node": "^22.15.17",
+          "@types/react": "^19.1.2",
+          "@types/react-dom": "^19.1.2",
+          typescript: "^5.8.3",
+        },
+      },
+      null,
+      2
+    ),
+    "tsconfig.json": JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2017",
+          lib: ["dom", "dom.iterable", "esnext"],
+          allowJs: true,
+          skipLibCheck: true,
+          strict: true,
+          forceConsistentCasingInFileNames: true,
+          noEmit: true,
+          esModuleInterop: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          resolveJsonModule: true,
+          isolatedModules: true,
+          jsx: "preserve",
+          incremental: true,
+          plugins: [{ name: "next" }],
+        },
+        include: ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+        exclude: ["node_modules"],
+      },
+      null,
+      2
+    ),
+    "next-env.d.ts": "/// <reference types=\"next\" />\n/// <reference types=\"next/image-types/global\" />\n\n// NOTE: This file should not be edited\n",
+    "app/layout.tsx": "import \"./globals.css\";\n\nexport default function RootLayout({ children }: { children: React.ReactNode }) {\n  return (\n    <html lang=\"en\">\n      <body>{children}</body>\n    </html>\n  );\n}\n",
+    "app/globals.css": ":root {\n  color-scheme: light;\n}\n",
+    "app/page.tsx": pageCode,
+  };
+}
+
+export class NextReactEmitter implements FrameworkEmitter {
+  targetFramework = "next-react" as const;
+
+  emitProject(project: ProjectIR): Record<string, string> {
+    if (!project.pages.length) {
+      return {};
+    }
+    return emitNextProjectScaffold(project.pages[0]);
+  }
 }

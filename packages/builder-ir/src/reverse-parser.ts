@@ -1,7 +1,8 @@
 import { parse } from "@babel/parser";
 import traverse from "@babel/traverse";
 import recast from "recast";
-import type { IRNode, ElementNode, TextNode, PageIR } from "./types";
+import type { IRNode, ElementNode, TextNode, PageIR, ProjectIR } from "./types";
+import type { FrameworkParser } from "./emitter";
 
 // Remove all custom code regions before parsing with recast
 function stripCustomCodeRegions(code: string): string {
@@ -347,7 +348,15 @@ function parseJSXElement(nodeOrPath: any): any {
   return ir;
 }
 
-export function parsePageIR(code: string): PageIR {
+export interface ParseReactComponentOptions {
+  componentName?: string;
+  pageId?: string;
+  pageName?: string;
+  route?: string;
+}
+
+export function parseReactComponentIR(code: string, options: ParseReactComponentOptions = {}): PageIR {
+  const componentName = options.componentName ?? "Page";
   // Extract customCode regions
   const customCode = extractCustomCodeRegions(code);
   // Remove regions for recast parse
@@ -357,10 +366,16 @@ export function parsePageIR(code: string): PageIR {
   let root: IRNode | null = null;
   traverse(ast, {
     FunctionDeclaration(path: any) {
-      // Look for default export function Page()
+      // Look for default export function matching target component name.
       const id = path.node.id;
       const parentNode = path.parentPath?.node;
-      if (id && id.type === "Identifier" && id.name === "Page" && parentNode && parentNode.type === "ExportDefaultDeclaration") {
+      if (
+        id &&
+        id.type === "Identifier" &&
+        id.name === componentName &&
+        parentNode &&
+        parentNode.type === "ExportDefaultDeclaration"
+      ) {
         path.traverse({
           ReturnStatement(returnPath: any) {
             const arg = returnPath.node.argument;
@@ -380,11 +395,40 @@ export function parsePageIR(code: string): PageIR {
     (root as any).customCode = customCode;
   }
   return {
-    id: "page-id",
-    name: "Page",
-    route: "/",
+    id: options.pageId ?? "page-id",
+    name: options.pageName ?? componentName,
+    route: options.route ?? "/",
     root,
     meta: {},
     state: [],
   };
+}
+
+export function parsePageIR(code: string): PageIR {
+  return parseReactComponentIR(code, {
+    componentName: "Page",
+    pageId: "page-id",
+    pageName: "Page",
+    route: "/",
+  });
+}
+
+export class NextReactParser implements FrameworkParser {
+  targetFramework = "next-react" as const;
+
+  parseProject(files: Record<string, string>): ProjectIR {
+    const pageCode = files["app/page.tsx"];
+    if (!pageCode) {
+      throw new Error("Missing app/page.tsx in Next.js project output");
+    }
+
+    return {
+      schemaVersion: "1.0.0",
+      framework: "react",
+      designTokens: {},
+      pages: [parsePageIR(pageCode)],
+      components: {},
+      assets: {},
+    };
+  }
 }
