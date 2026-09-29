@@ -119,6 +119,9 @@ importers:
       '@builder/ir':
         specifier: workspace:*
         version: link:../builder-ir
+      '@builder/marketplace':
+        specifier: workspace:*
+        version: link:../builder-marketplace
       '@builder/sync':
         specifier: workspace:*
         version: link:../builder-sync
