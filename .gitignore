@@ -12,3 +12,17 @@ node_modules
 .vscode
 .idea
 *.tsbuildinfo
+
+# Added 2026-09-29 (ABP phase R): generated and machine-local files
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.turbo/
+*.db
+apps/desktop/build/
+apps/desktop/build_tmp/
+apps/desktop/logs/
+apps/desktop/config/states/
+apps/desktop/backup_*.json
+ProjectData.md

@@ -1,0 +1,18 @@
+# WebBuilder ML Engine - Requirements
+# Install with: pip install -r requirements-ml.txt
+#
+# The ML Engine is built from scratch with NumPy as its primary dependency.
+# No external ML frameworks (TensorFlow, PyTorch, etc.) are required.
+
+# Core ML dependency
+numpy>=1.21.0
+
+# Optional: for enhanced model serialization
+# h5py>=3.0.0  # HDF5 format support
+
+# Optional: for model visualization
+# matplotlib>=3.5.0  # Training curves, architecture diagrams
+
+# Optional: for advanced data processing
+# pandas>=1.3.0  # Data manipulation
+# scikit-learn>=1.0.0  # Metrics and preprocessing utilities

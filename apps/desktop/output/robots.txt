@@ -1,0 +1,7 @@
+# robots.txt for TaskFlow
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+
+Sitemap: https://taskflow.app/sitemap.xml

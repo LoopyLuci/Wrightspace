@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebBuilder — Visual Editor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; overflow: hidden; }
+    
+    .app { display: flex; height: 100vh; }
+    
+    /* Left sidebar */
+    .sidebar { width: 260px; background: #1e293b; border-right: 1px solid #334155; display: flex; flex-direction: column; }
+    .sidebar-header { padding: 12px; border-bottom: 1px solid #334155; }
+    .sidebar-header h3 { font-size: 13px; color: #f8fafc; }
+    .sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
+    .category { margin-bottom: 12px; }
+    .category-title { font-size: 10px; color: #64748b; font-weight: bold; text-transform: uppercase; padding: 4px 0; }
+    .section-item { padding: 8px 12px; background: #334155; border: 1px solid #475569; border-radius: 4px; margin-bottom: 4px; cursor: pointer; font-size: 11px; color: #f8fafc; }
+    .section-item:hover { background: #475569; }
+    .section-item.dragging { opacity: 0.5; }
+    
+    /* Center canvas */
+    .canvas-container { flex: 1; display: flex; flex-direction: column; background: #0f172a; }
+    .canvas-toolbar { padding: 8px 12px; background: #1e293b; border-bottom: 1px solid #334155; display: flex; gap: 8px; }
+    .canvas-toolbar button { padding: 6px 12px; background: #334155; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; cursor: pointer; font-size: 11px; }
+    .canvas-toolbar button:hover { background: #475569; }
+    .canvas-toolbar button.primary { background: #3b82f6; border-color: #3b82f6; }
+    .canvas { flex: 1; overflow: auto; padding: 20px; display: flex; justify-content: center; }
+    .canvas-page { width: 1200px; min-height: 800px; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); position: relative; }
+    .canvas-page.drag-over { outline: 2px dashed #3b82f6; outline-offset: -2px; }
+    .canvas-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #64748b; }
+    .canvas-empty-icon { font-size: 48px; margin-bottom: 16px; }
+    
+    /* Section on canvas */
+    .canvas-section { position: relative; border: 2px solid transparent; transition: border-color 0.2s; }
+    .canvas-section:hover { border-color: #3b82f6; }
+    .canvas-section.selected { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.2); }
+    .canvas-section .delete-btn { position: absolute; top: -10px; right: -10px; width: 20px; height: 20px; background: #ef4444; color: white; border: none; border-radius: 50%; cursor: pointer; font-size: 10px; display: none; }
+    .canvas-section:hover .delete-btn { display: block; }
+    .canvas-section .drag-handle { position: absolute; left: -20px; top: 50%; transform: translateY(-50%); cursor: grab; color: #64748b; display: none; }
+    .canvas-section:hover .drag-handle { display: block; }
+    
+    /* Right panel */
+    .right-panel { width: 280px; background: #1e293b; border-left: 1px solid #334155; display: flex; flex-direction: column; }
+    .panel-tabs { display: flex; border-bottom: 1px solid #334155; }
+    .panel-tab { flex: 1; padding: 8px; text-align: center; cursor: pointer; font-size: 11px; color: #94a3b8; }
+    .panel-tab.active { color: #3b82f6; border-bottom: 2px solid #3b82f6; }
+    .panel-content { flex: 1; overflow-y: auto; padding: 12px; }
+    
+    /* Properties */
+    .prop-group { margin-bottom: 16px; }
+    .prop-label { font-size: 10px; color: #94a3b8; margin-bottom: 4px; display: block; }
+    .prop-input { width: 100%; padding: 6px 8px; background: #0f172a; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; font-size: 11px; }
+    .prop-input:focus { outline: none; border-color: #3b82f6; }
+    
+    /* Chat */
+    .chat-container { display: flex; flex-direction: column; height: 100%; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 8px; }
+    .chat-message { margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; font-size: 11px; max-width: 90%; }
+    .chat-message.user { background: #3b82f6; color: white; margin-left: auto; border-radius: 8px 8px 2px 8px; }
+    .chat-message.assistant { background: #334155; color: #f8fafc; border-radius: 8px 8px 8px 2px; }
+    .chat-input { padding: 8px; border-top: 1px solid #334155; display: flex; gap: 4px; }
+    .chat-input input { flex: 1; padding: 6px 8px; background: #0f172a; border: 1px solid #475569; border-radius: 4px; color: #f8fafc; font-size: 11px; }
+    .chat-input button { padding: 6px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    
+    /* Asset library */
+    .asset-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .asset-item { padding: 12px; background: #334155; border: 1px solid #475569; border-radius: 4px; text-align: center; cursor: pointer; }
+    .asset-item:hover { background: #475569; }
+    .asset-preview { font-size: 24px; margin-bottom: 4px; }
+    .asset-name { font-size: 10px; color: #94a3b8; }
+    
+    /* Viewport sizes */
+    .viewport-mobile .canvas-page { width: 375px; }
+    .viewport-tablet .canvas-page { width: 768px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Left Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h3>📦 Sections</h3>
+      </div>
+      <div class="sidebar-content" id="sectionPalette"></div>
+    </div>
+    
+    <!-- Center Canvas -->
+    <div class="canvas-container">
+      <div class="canvas-toolbar">
+        <button onclick="setViewport('desktop')">🖥 Desktop</button>
+        <button onclick="setViewport('tablet')">📱 Tablet</button>
+        <button onclick="setViewport('mobile')">📲 Mobile</button>
+        <button onclick="undo()">↶ Undo</button>
+        <button onclick="redo()">↷ Redo</button>
+        <button onclick="clearCanvas()">🗑 Clear</button>
+        <button class="primary" onclick="generateProject()">🚀 Generate</button>
+        <button onclick="exportHTML()">📤 Export</button>
+        <button onclick="saveProject()">💾 Save</button>
+      </div>
+      <div class="canvas">
+        <div class="canvas-page" id="canvas">
+          <div class="canvas-empty">
+            <div class="canvas-empty-icon">🎨</div>
+            <div>Ready to Build?</div>
+            <div style="font-size: 12px; margin-top: 8px;">Drag sections here or click Generate</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Right Panel -->
+    <div class="right-panel">
+      <div class="panel-tabs">
+        <div class="panel-tab active" onclick="switchTab('properties')">⚙️ Properties</div>
+        <div class="panel-tab" onclick="switchTab('chat')">🤖 Chat</div>
+        <div class="panel-tab" onclick="switchTab('assets')">📦 Assets</div>
+      </div>
+      <div class="panel-content" id="panelContent"></div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let project = { pages: [{ sections: [] }], currentPage: 0 };
+    let selectedSection = null;
+    let history = [];
+    let historyIndex = -1;
+    let chatHistory = [];
+    
+    // Section templates
+    const sectionTemplates = {
+      'hero-centered': {
+        name: 'Hero Centered',
+        html: (p) => `<div style="padding: 80px 20px; text-align: center; background: ${p.bg || '#3b82f6'}; color: white;">
+          <h1 style="font-size: 48px; margin-bottom: 16px;">${p.title || 'Welcome'}</h1>
+          <p style="font-size: 18px; opacity: 0.9; margin-bottom: 24px;">${p.subtitle || 'Build something amazing'}</p>
+          <button style="padding: 12px 24px; background: white; color: ${p.bg || '#3b82f6'}; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">${p.cta || 'Get Started'}</button>
+        </div>`,
+        props: { title: 'Welcome to Your Company', subtitle: 'Build something amazing', cta: 'Get Started', bg: '#3b82f6' }
+      },
+      'features-grid-3': {
+        name: 'Features 3 Col',
+        html: (p) => `<div style="padding: 60px 20px; background: #f8fafc;">
+          <h2 style="text-align: center; font-size: 32px; margin-bottom: 12px; color: #1e293b;">${p.title || 'Features'}</h2>
+          <p style="text-align: center; color: #64748b; margin-bottom: 40px;">${p.subtitle || 'Everything you need'}</p>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1000px; margin: 0 auto;">
+            ${(p.items || [{t:'Fast',d:'Lightning fast',i:'⚡'},{t:'Secure',d:'Enterprise security',i:'🔒'},{t:'Scalable',d:'Grows with you',i:'📈'}]).map(item => `
+              <div style="padding: 24px; background: white; border-radius: 8px; text-align: center;">
+                <div style="font-size: 32px; margin-bottom: 12px;">${item.i}</div>
+                <h3 style="font-size: 16px; margin-bottom: 8px; color: #1e293b;">${item.t}</h3>
+                <p style="color: #64748b; font-size: 14px;">${item.d}</p>
+              </div>
+            `).join('')}
+          </div>
+        </div>`,
+        props: { title: 'Features', subtitle: 'Everything you need', items: [{t:'Fast',d:'Lightning fast',i:'⚡'},{t:'Secure',d:'Enterprise security',i:'🔒'},{t:'Scalable',d:'Grows with you',i:'📈'}] }
+      },
+      'pricing-3-tiers': {
+        name: 'Pricing 3 Tiers',
+        html: (p) => `<div style="padding: 60px 20px; background: white;">
+          <h2 style="text-align: center; font-size: 32px; margin-bottom: 12px; color: #1e293b;">${p.title || 'Pricing'}</h2>
+          <p style="text-align: center; color: #64748b; margin-bottom: 40px;">${p.subtitle || 'Choose your plan'}</p>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 900px; margin: 0 auto;">
+            ${(p.tiers || [{n:'Starter',p:'$0',f:['1 Project','Basic Support']},{n:'Pro',p:'$29',f:['Unlimited','Priority Support','API Access']},{n:'Enterprise',p:'$99',f:['Everything','Custom','Dedicated Support']}]).map((t,i) => `
+              <div style="padding: 32px; border: 2px solid ${i===1?'#3b82f6':'#e2e8f0'}; border-radius: 12px; text-align: center; ${i===1?'box-shadow: 0 4px 20px rgba(59,130,246,0.2);':''}">
+                <h3 style="font-size: 18px; margin-bottom: 8px; color: #1e293b;">${t.n}</h3>
+                <div style="font-size: 36px; font-weight: bold; color: #1e293b; margin-bottom: 16px;">${t.p}<span style="font-size: 14px; color: #64748b;">/mo</span></div>
+                <ul style="list-style: none; padding: 0; margin-bottom: 24px;">
+                  ${t.f.map(f => `<li style="padding: 8px 0; color: #64748b; font-size: 14px;">✓ ${f}</li>`).join('')}
+                </ul>
+                <button style="width: 100%; padding: 10px; background: ${i===1?'#3b82f6':'#f8fafc'}; color: ${i===1?'white':'#1e293b'}; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">Get Started</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>`,
+        props: { title: 'Pricing', subtitle: 'Choose your plan', tiers: [{n:'Starter',p:'$0',f:['1 Project','Basic Support']},{n:'Pro',p:'$29',f:['Unlimited','Priority Support','API Access']},{n:'Enterprise',p:'$99',f:['Everything','Custom','Dedicated Support']}] }
+      },
+      'cta-simple': {
+        name: 'CTA Simple',
+        html: (p) => `<div style="padding: 60px 20px; text-align: center; background: ${p.bg || '#3b82f6'}; color: white;">
+          <h2 style="font-size: 32px; margin-bottom: 12px;">${p.title || 'Ready to get started?'}</h2>
+          <p style="font-size: 16px; opacity: 0.9; margin-bottom: 24px;">${p.subtitle || 'Join thousands of users'}</p>
+          <button style="padding: 12px 24px; background: white; color: ${p.bg || '#3b82f6'}; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">${p.button || 'Sign Up Now'}</button>
+        </div>`,
+        props: { title: 'Ready to get started?', subtitle: 'Join thousands of users', button: 'Sign Up Now', bg: '#3b82f6' }
+      },
+      'footer': {
+        name: 'Footer',
+        html: (p) => `<div style="padding: 40px 20px; background: #0f172a; color: #94a3b8; text-align: center;">
+          <p style="font-size: 14px;">${p.copyright || '© 2024 Your Company'}</p>
+          <div style="margin-top: 12px;">
+            ${(p.links || ['Privacy','Terms','Contact']).map(l => `<a href="#" style="color: #94a3b8; text-decoration: none; margin: 0 12px; font-size: 13px;">${l}</a>`).join('')}
+          </div>
+        </div>`,
+        props: { copyright: '© 2024 Your Company', links: ['Privacy','Terms','Contact'] }
+      }
+    };
+    
+    // Initialize
+    function init() {
+      renderPalette();
+      renderProperties();
+      renderChat();
+      loadProject();
+    }
+    
+    function renderPalette() {
+      const palette = document.getElementById('sectionPalette');
+      const categories = {
+        'Layout': ['hero-centered', 'footer'],
+        'Content': ['features-grid-3'],
+        'Conversion': ['pricing-3-tiers', 'cta-simple']
+      };
+      
+      palette.innerHTML = Object.entries(categories).map(([cat, items]) => `
+        <div class="category">
+          <div class="category-title">${cat}</div>
+          ${items.map(item => `
+            <div class="section-item" draggable="true" data-type="${item}"
+                 ondragstart="dragStart(event, '${item}')"
+                 onclick="addSection('${item}')">
+              ${sectionTemplates[item]?.name || item}
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+    }
+    
+    function dragStart(e, type) {
+      e.dataTransfer.setData('section-type', type);
+    }
+    
+    function addSection(type) {
+      const template = sectionTemplates[type];
+      if (!template) return;
+      
+      const section = {
+        id: 'sec-' + Date.now(),
+        type: type,
+        props: JSON.parse(JSON.stringify(template.props))
+      };
+      
+      project.pages[0].sections.push(section);
+      renderCanvas();
+      saveHistory();
+    }
+    
+    function renderCanvas() {
+      const canvas = document.getElementById('canvas');
+      const sections = project.pages[0].sections;
+      
+      if (sections.length === 0) {
+        canvas.innerHTML = `<div class="canvas-empty"><div class="canvas-empty-icon">🎨</div><div>Ready to Build?</div><div style="font-size:12px;margin-top:8px;">Drag sections here or click Generate</div></div>`;
+        return;
+      }
+      
+      canvas.innerHTML = sections.map((s, i) => {
+        const template = sectionTemplates[s.type];
+        if (!template) return '';
+        return `<div class="canvas-section ${selectedSection === s.id ? 'selected' : ''}" 
+                     data-id="${s.id}"
+                     onclick="selectSection('${s.id}')">
+          <span class="drag-handle">⠿</span>
+          <button class="delete-btn" onclick="deleteSection('${s.id}', event)">✕</button>
+          ${template.html(s.props)}
+        </div>`;
+      }).join('');
+    }
+    
+    function selectSection(id) {
+      selectedSection = id;
+      renderCanvas();
+      renderProperties();
+    }
+    
+    function deleteSection(id, e) {
+      e.stopPropagation();
+      project.pages[0].sections = project.pages[0].sections.filter(s => s.id !== id);
+      selectedSection = null;
+      renderCanvas();
+      saveHistory();
+    }
+    
+    function renderProperties() {
+      const content = document.getElementById('panelContent');
+      const section = project.pages[0].sections.find(s => s.id === selectedSection);
+      
+      if (!section) {
+        content.innerHTML = '<div style="color:#64748b;text-align:center;padding:20px;">Select a section to edit</div>';
+        return;
+      }
+      
+      content.innerHTML = `
+        <div class="prop-group">
+          <label class="prop-label">Type</label>
+          <div style="color:#f8fafc;font-size:12px;">${section.type}</div>
+        </div>
+        ${Object.entries(section.props).map(([key, value]) => {
+          if (typeof value === 'string') {
+            return `<div class="prop-group">
+              <label class="prop-label">${key}</label>
+              <input class="prop-input" value="${value}" onchange="updateProp('${key}', this.value)">
+            </div>`;
+          }
+          return '';
+        }).join('')}
+      `;
+    }
+    
+    function updateProp(key, value) {
+      const section = project.pages[0].sections.find(s => s.id === selectedSection);
+      if (section) {
+        section.props[key] = value;
+        renderCanvas();
+        saveHistory();
+      }
+    }
+    
+    function renderChat() {
+      // Chat is rendered in the panel
+    }
+    
+    function switchTab(tab) {
+      document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      event.target.classList.add('active');
+      
+      const content = document.getElementById('panelContent');
+      if (tab === 'properties') renderProperties();
+      else if (tab === 'chat') renderChatPanel();
+      else if (tab === 'assets') renderAssets();
+    }
+    
+    function renderChatPanel() {
+      const content = document.getElementById('panelContent');
+      content.innerHTML = `
+        <div class="chat-container">
+          <div class="chat-messages" id="chatMessages">
+            ${chatHistory.map(m => `<div class="chat-message ${m.role}">${m.content}</div>`).join('')}
+          </div>
+          <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="Ask agent..." onkeypress="if(event.key==='Enter')sendChat()">
+            <button onclick="sendChat()">Send</button>
+          </div>
+        </div>
+      `;
+    }
+    
+    function sendChat() {
+      const input = document.getElementById('chatInput');
+      const msg = input.value.trim();
+      if (!msg) return;
+      
+      chatHistory.push({ role: 'user', content: msg });
+      input.value = '';
+      renderChatPanel();
+      
+      // Simulate response
+      setTimeout(() => {
+        chatHistory.push({ role: 'assistant', content: `I can help with "${msg}". Let me think...` });
+        renderChatPanel();
+      }, 500);
+    }
+    
+    function renderAssets() {
+      const content = document.getElementById('panelContent');
+      const assets = [
+        { icon: '⚡', name: 'Lightning' },
+        { icon: '🔒', name: 'Shield' },
+        { icon: '📈', name: 'Chart' },
+        { icon: '🎨', name: 'Palette' },
+        { icon: '📱', name: 'Mobile' },
+        { icon: '💻', name: 'Desktop' }
+      ];
+      
+      content.innerHTML = `<div class="asset-grid">
+        ${assets.map(a => `<div class="asset-item"><div class="asset-preview">${a.icon}</div><div class="asset-name">${a.name}</div></div>`).join('')}
+      </div>`;
+    }
+    
+    function setViewport(size) {
+      const canvas = document.querySelector('.canvas-page');
+      canvas.className = 'canvas-page viewport-' + size;
+    }
+    
+    function generateProject() {
+      project.pages[0].sections = [
+        { id: 'gen-1', type: 'hero-centered', props: { title: 'Welcome to Your Company', subtitle: 'Build something amazing', cta: 'Get Started', bg: '#3b82f6' } },
+        { id: 'gen-2', type: 'features-grid-3', props: { title: 'Features', subtitle: 'Everything you need', items: [{t:'Fast',d:'Lightning fast',i:'⚡'},{t:'Secure',d:'Enterprise security',i:'🔒'},{t:'Scalable',d:'Grows with you',i:'📈'}] } },
+        { id: 'gen-3', type: 'pricing-3-tiers', props: { title: 'Pricing', subtitle: 'Choose your plan', tiers: [{n:'Starter',p:'$0',f:['1 Project','Basic Support']},{n:'Pro',p:'$29',f:['Unlimited','Priority Support']},{n:'Enterprise',p:'$99',f:['Everything','Custom']}] } },
+        { id: 'gen-4', type: 'cta-simple', props: { title: 'Ready?', subtitle: 'Join us today', button: 'Sign Up', bg: '#3b82f6' } },
+        { id: 'gen-5', type: 'footer', props: { copyright: '© 2024 Your Company', links: ['Privacy','Terms','Contact'] } }
+      ];
+      renderCanvas();
+      saveHistory();
+    }
+    
+    function exportHTML() {
+      const sections = project.pages[0].sections;
+      let html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>My Project</title></head><body>';
+      sections.forEach(s => {
+        const template = sectionTemplates[s.type];
+        if (template) html += template.html(s.props);
+      });
+      html += '</body></html>';
+      
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'index.html';
+      a.click();
+    }
+    
+    function saveProject() {
+      localStorage.setItem('webbuilder-project', JSON.stringify(project));
+      alert('Project saved!');
+    }
+    
+    function loadProject() {
+      const saved = localStorage.getItem('webbuilder-project');
+      if (saved) {
+        project = JSON.parse(saved);
+        renderCanvas();
+      }
+    }
+    
+    function saveHistory() {
+      history = history.slice(0, historyIndex + 1);
+      history.push(JSON.stringify(project));
+      historyIndex = history.length - 1;
+    }
+    
+    function undo() {
+      if (historyIndex > 0) {
+        historyIndex--;
+        project = JSON.parse(history[historyIndex]);
+        renderCanvas();
+      }
+    }
+    
+    function redo() {
+      if (historyIndex < history.length - 1) {
+        historyIndex++;
+        project = JSON.parse(history[historyIndex]);
+        renderCanvas();
+      }
+    }
+    
+    function clearCanvas() {
+      project.pages[0].sections = [];
+      selectedSection = null;
+      renderCanvas();
+      saveHistory();
+    }
+    
+    // Drag and drop
+    const canvasEl = document.getElementById('canvas');
+    canvasEl.addEventListener('dragover', e => { e.preventDefault(); canvasEl.classList.add('drag-over'); });
+    canvasEl.addEventListener('dragleave', () => canvasEl.classList.remove('drag-over'));
+    canvasEl.addEventListener('drop', e => {
+      e.preventDefault();
+      canvasEl.classList.remove('drag-over');
+      const type = e.dataTransfer.getData('section-type');
+      if (type) addSection(type);
+    });
+    
+    init();
+  </script>
+</body>
+</html>

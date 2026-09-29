@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webbuilder"
+version = "8.0.0"
+description = "A professional web building platform with AI assistance"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "WebBuilder Community", email = "community@webbuilder.dev"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP :: Site Management",
+]
+dependencies = [
+    "numpy>=1.21.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PyQt5>=5.15.0",
+    "PyQtWebEngine>=5.15.0",
+]
+ai = [
+    "aiohttp>=3.8.0",
+    "PyJWT>=2.0.0",
+]
+server = [
+    "Flask>=2.0.0",
+    "Flask-SQLAlchemy>=3.0.0",
+    "Flask-Login>=0.6.0",
+    "Flask-Limiter>=3.0.0",
+    "Flask-CORS>=4.0.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.1.0",
+]
+all = [
+    "webbuilder[gui,ai,server,dev]",
+]
+
+[project.scripts]
+webbuilder = "webbuilder.gui:main"
+webbuilder-cli = "webbuilder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["webbuilder*"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/core/tests",
+    "apps/desktop/tests",
+]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+    "security: marks security tests",
+    "performance: marks performance tests",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "webbuilder.gui"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "webbuilder.ai"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "webbuilder.export"
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501", "B008", "F811"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["webbuilder"]
